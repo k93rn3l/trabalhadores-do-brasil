@@ -1,0 +1,116 @@
+---
+/**
+ * Termos de Uso. Trechos destacados indicam o que preencher antes da
+ * publicação oficial.
+ */
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { siteConfig } from '../config/site';
+---
+
+<BaseLayout
+  titulo="Termos de Uso"
+  descricao="Regras de uso do catálogo de profissionais autônomos: para visitantes, para profissionais cadastrados e limitações de responsabilidade."
+>
+  <div class="container">
+    <article class="conteudo-institucional">
+      <h1>Termos de Uso</h1>
+      <p class="texto-suave">
+        Última atualização: <span class="pendente-preenchimento">[PREENCHER: data]</span>
+      </p>
+
+      <p>
+        Bem-vindo ao {siteConfig.nome}. Ao acessar ou utilizar este site, você
+        concorda com estes Termos. O serviço é operado por{' '}
+        <span class="pendente-preenchimento">[PREENCHER: nome do responsável / CNPJ]</span>.
+      </p>
+
+      <h2>1. Sobre o serviço</h2>
+      <p>
+        O {siteConfig.nome} é um catálogo público e gratuito de divulgação de
+        serviços prestados por profissionais autônomos no Brasil.{' '}
+        <strong>Não somos parte</strong> em nenhuma negociação: não
+        intermediamos pagamentos, contratações, prazos, garantias ou
+        resolução de conflitos entre visitantes e profissionais.
+      </p>
+
+      <h2>2. O que a publicação significa (e o que não significa)</h2>
+      <p>
+        Cada cadastro passa por revisão humana de completude e de
+        consentimento antes da publicação. <strong>A aprovação não constitui
+        verificação de identidade, qualificação profissional, idoneidade ou
+        capacidade técnica</strong>, e o serviço não emite selos, selos de
+        verificação ou avaliações de qualidade. A responsabilidade pela
+        exatidão das informações divulgadas é do próprio profissional que as
+        declarou.
+      </p>
+
+      <h2>3. Responsabilidades do visitante</h2>
+      <ul>
+        <li>Contrate sob sua própria avaliação: confira informações, combine escopo, valores e prazos antes de fechar qualquer serviço;</li>
+        <li>O contato é feito diretamente pelo WhatsApp; o serviço não participa da conversa;</li>
+        <li>Não utilize dados de contato publicados para spam, assédio ou ofertas não solicitadas.</li>
+      </ul>
+
+      <h2>4. Responsabilidades do profissional cadastrado</h2>
+      <ul>
+        <li>Declarar informações verdadeiras, completas e atualizadas;</li>
+        <li>Divulgar apenas dados de sua titularidade ou com autorização expressa;</li>
+        <li>Manter o WhatsApp divulgado em funcionamento;</li>
+        <li>Atualizar ou solicitar a remoção do cadastro quando desejar;</li>
+        <li>Responder por seus serviços perante os clientes — o catálogo é apenas veículo de divulgação.</li>
+      </ul>
+
+      <h2>5. Conteúdo proibido</h2>
+      <p>
+        Não são publicados (e serão removidos) cadastros com: conteúdo ilegal,
+        discriminatório, ofensivo ou enganoso; serviços que exijam registro
+        profissional não comprovável quando a lei exigir; uso de dados de
+        terceiros sem autorização; propaganda de produtos ou serviços não
+        relacionados ao exercício profissional autônomo declarado.
+      </p>
+
+      <h2>6. Moderação e remoção</h2>
+      <p>
+        A moderação pode recusar, corrigir, desativar ou remover qualquer
+        cadastro, a qualquer tempo, mediante denúncia fundamentada ou detecção
+        de violação destes Termos, comunicando o titular quando houver contato
+        disponível.
+      </p>
+
+      <h2>7. Propriedade intelectual</h2>
+      <p>
+        As informações divulgadas pertencem ao profissional que as forneceu,
+        que autoriza sua publicação neste catálogo. O código-fonte do site é
+        aberto. Marcas de terceiros, quando citadas, pertencem aos seus
+        titulares.
+      </p>
+
+      <h2>8. Limitação de responsabilidade</h2>
+      <p>
+        O serviço é fornecido “no estado em que se encontra”, com esforço de
+        disponibilidade e correção, sem garantia de ininterruptibilidade. Na
+        máxima extensão permitida pela lei, o operador não responde por danos
+        decorrentes de contratações firmadas entre visitantes e profissionais,
+        nem por informações incorretas declaradas por cadastrados.
+      </p>
+
+      <h2>9. Alterações</h2>
+      <p>
+        Estes Termos podem ser atualizados; a data no topo indica a versão
+        vigente. Uso continuado após alterações significa concordância.
+      </p>
+
+      <h2>10. Foro e legislação</h2>
+      <p>
+        Aplica-se a legislação brasileira, incluindo a LGPD (veja a{' '}
+        <a href="/privacidade/">Política de Privacidade</a>) e o Código de
+        Defesa do Consumidor quando cabível. Fica eleito o foro de{' '}
+        <span class="pendente-preenchimento">[PREENCHER: comarca]</span>.
+      </p>
+
+      <p class="texto-suave">
+        Contato: <span class="pendente-preenchimento">[PREENCHER: e-mail institucional]</span>
+      </p>
+    </article>
+  </div>
+</BaseLayout>

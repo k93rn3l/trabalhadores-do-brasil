@@ -1,0 +1,144 @@
+---
+/** Página inicial enxuta: busca, categorias e cadastro. */
+import BaseLayout from '../layouts/BaseLayout.astro';
+import FiltrosBusca from '../components/FiltrosBusca.astro';
+import EstadoVazio from '../components/EstadoVazio.astro';
+import { siteConfig } from '../config/site';
+import { CATEGORIAS } from '../config/categorias';
+import { carregarCatalogo } from '../lib/catalogo-server';
+import { categoriasDisponiveis } from '../lib/busca';
+import { slug } from '../lib/normalizar';
+
+const { catalogo } = carregarCatalogo();
+const contagemCategorias = new Map(
+  categoriasDisponiveis(catalogo.profissionais).map((c) => [c.slug, c.total]),
+);
+const temProfissionais = catalogo.profissionais.length > 0;
+
+const jsonLdWebsite = Astro.site
+  ? {
+      '@context': 'https://schema.org',
+      '@type': 'WebSite',
+      name: siteConfig.nome,
+      description: siteConfig.descricao,
+      url: Astro.site.href,
+      potentialAction: {
+        '@type': 'SearchAction',
+        target: {
+          '@type': 'EntryPoint',
+          urlTemplate: `${new URL('buscar/', Astro.site)}?q={search_term_string}`,
+        },
+        'query-input': 'required name=search_term_string',
+      },
+    }
+  : null;
+---
+
+<BaseLayout>
+  {jsonLdWebsite && <script type="application/ld+json" set:html={JSON.stringify(jsonLdWebsite)} />}
+
+  <div class="container">
+    <h1>Encontre profissionais autônomos</h1>
+    <p class="texto-suave" style="margin-bottom:0;">
+      Busque por serviço, estado e município — contato direto pelo WhatsApp, grátis.
+    </p>
+
+    <FiltrosBusca modo="inicio" />
+
+    <section class="secao" aria-labelledby="titulo-categorias">
+      <h2 id="titulo-categorias">Categorias</h2>
+      {
+        temProfissionais ? (
+          <ul class="lista-categorias">
+            {CATEGORIAS.map((categoria) => {
+              const slugCategoria = slug(categoria.nome);
+              const total = contagemCategorias.get(slugCategoria) ?? 0;
+              return (
+                <li>
+                  <a href={`/buscar/?categoria=${slugCategoria}`}>{categoria.nome}</a>{' '}
+                  {total > 0 && <small>({total})</small>}
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <EstadoVazio
+            titulo="Catálogo vazio"
+            texto="Ainda não há profissionais publicados."
+          />
+        )
+      }
+    </section>
+
+    <section class="secao" aria-labelledby="titulo-cadastrar">
+      <h2 id="titulo-cadastrar">É autônomo?</h2>
+      <p>
+        Cadastre seu serviço gratuitamente e apareça na busca da sua região.{' '}
+        <a href="/cadastrar/">Cadastrar meu serviço</a>
+      </p>
+    </section>
+
+    <p class="aviso aviso--info" style="margin-top:1.5rem;">
+      O {siteConfig.nome} apenas divulga cadastros autorizados. Negocie
+      diretamente com o profissional e avalie antes de contratar.
+    </p>
+  </div>
+</BaseLayout>
+
+<script>
+  /** Popula o seletor de municípios conforme o estado escolhido. */
+  const form = document.querySelector<HTMLFormElement>('[data-filtros="inicio"]');
+  const seletorUf = form?.querySelector<HTMLSelectElement>('[data-seletor-uf]');
+  const seletorMunicipio = form?.querySelector<HTMLSelectElement>('[data-seletor-municipio]');
+
+  function desabilitarMunicipio(rotulo: string) {
+    if (!seletorMunicipio) return;
+    seletorMunicipio.disabled = true;
+    seletorMunicipio.innerHTML = `<option value="">${rotulo}</option>`;
+  }
+
+  async function carregarMunicipios(uf: string) {
+    if (!seletorMunicipio) return;
+    desabilitarMunicipio('Carregando…');
+    try {
+      const resposta = await fetch(`/data/uf/${uf.toLowerCase()}.json`);
+      if (!resposta.ok) {
+        desabilitarMunicipio('Nenhum município disponível');
+        return;
+      }
+      const dados = (await resposta.json()) as { profissionais?: { municipio: string }[] };
+      const nomes = [...new Set((dados.profissionais ?? []).map((p) => p.municipio))].sort((a, b) =>
+        a.localeCompare(b, 'pt-BR'),
+      );
+      if (nomes.length === 0) {
+        desabilitarMunicipio('Nenhum município disponível');
+        return;
+      }
+      seletorMunicipio.disabled = false;
+      seletorMunicipio.innerHTML =
+        `<option value="">Todos os municípios</option>` +
+        nomes
+          .map((nome) => {
+            const valor = nome
+              .normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, '');
+            return `<option value="${valor}">${nome}</option>`;
+          })
+          .join('');
+    } catch {
+      desabilitarMunicipio('Erro ao carregar municípios');
+    }
+  }
+
+  seletorUf?.addEventListener('change', () => {
+    const uf = seletorUf.value;
+    if (uf) {
+      void carregarMunicipios(uf);
+    } else {
+      desabilitarMunicipio('Selecione um estado');
+    }
+  });
+</script>

@@ -1,0 +1,23 @@
+---
+/** Estado vazio informativo com chamada para ação. */
+interface Props {
+  titulo: string;
+  texto: string;
+  mostrarCta?: boolean;
+}
+
+const { titulo, texto, mostrarCta = true } = Astro.props;
+---
+
+<div class="estado-vazio">
+  <h2>{titulo}</h2>
+  <p>{texto}</p>
+  {
+    mostrarCta && (
+      <p class="linha-botoes" style="justify-content:center;">
+        <a class="botao botao--primario" href="/cadastrar/">Cadastrar meu serviço</a>
+        <a class="botao botao--discreto" href="/buscar/">Ver todos os profissionais</a>
+      </p>
+    )
+  }
+</div>

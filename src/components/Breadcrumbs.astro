@@ -1,0 +1,24 @@
+---
+/** Navegação estrutural (breadcrumbs), também emitida como JSON-LD pelas páginas. */
+interface Item {
+  rotulo: string;
+  href?: string;
+}
+
+interface Props {
+  itens: Item[];
+}
+
+const { itens } = Astro.props;
+---
+
+<nav class="breadcrumbs" aria-label="Você está em">
+  <ol>
+    <li><a href="/">Início</a></li>
+    {
+      itens.map((item) =>
+        item.href ? <li><a href={item.href}>{item.rotulo}</a></li> : <li aria-current="page">{item.rotulo}</li>,
+      )
+    }
+  </ol>
+</nav>

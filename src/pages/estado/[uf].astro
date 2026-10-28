@@ -1,0 +1,65 @@
+---
+/** Página por estado (apenas quando há profissionais na UF). */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Breadcrumbs from '../../components/Breadcrumbs.astro';
+import ListaProfissionais from '../../components/ListaProfissionais.astro';
+import { carregarCatalogo } from '../../lib/catalogo-server';
+import { NOMES_POR_UF, type UF } from '../../lib/estados';
+import { montarURLBusca } from '../../lib/busca';
+
+export function getStaticPaths() {
+  const { catalogo } = carregarCatalogo();
+  const porUf = new Map<string, typeof catalogo.profissionais>();
+  for (const profissional of catalogo.profissionais) {
+    const atual = porUf.get(profissional.uf);
+    if (atual) atual.push(profissional);
+    else porUf.set(profissional.uf, [profissional]);
+  }
+  return [...porUf.entries()].map(([uf, itens]) => ({
+    params: { uf: uf.toLowerCase() },
+    props: { uf: uf as UF, profissionais: itens },
+  }));
+}
+
+const { uf, profissionais } = Astro.props;
+const municipios = new Map<string, { nome: string; total: number }>();
+for (const p of profissionais) {
+  const atual = municipios.get(p.municipioSlug);
+  if (atual) atual.total += 1;
+  else municipios.set(p.municipioSlug, { nome: p.municipio, total: 1 });
+}
+const municipiosOrdenados = [...municipios.entries()]
+  .map(([slugMunicipio, info]) => ({ slug: slugMunicipio, ...info }))
+  .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+  .slice(0, 60);
+---
+
+<BaseLayout
+  titulo={`Profissionais autônomos em ${NOMES_POR_UF[uf]} (${uf})`}
+  descricao={`Profissionais autônomos publicados em ${NOMES_POR_UF[uf]}. Contate diretamente pelo WhatsApp.`}
+>
+  <div class="container">
+    <Breadcrumbs itens={[{ rotulo: 'Estados', href: '/buscar/' }, { rotulo: NOMES_POR_UF[uf] }]} />
+
+    <h1>{NOMES_POR_UF[uf]} ({uf})</h1>
+    <p class="texto-suave">
+      {profissionais.length}{' '}
+      {profissionais.length === 1 ? 'profissional publicado' : 'profissionais publicados'} ·{' '}
+      <a href={montarURLBusca({ uf })}>buscar com filtros</a>
+    </p>
+
+    {
+      municipiosOrdenados.length > 1 && (
+        <p class="lista-chips" style="margin-bottom:1rem;">
+          {municipiosOrdenados.map((municipio) => (
+            <a class="etiqueta" href={`/municipio/${uf.toLowerCase()}/${municipio.slug}/`}>
+              {municipio.nome} ({municipio.total})
+            </a>
+          ))}
+        </p>
+      )
+    }
+
+    <ListaProfissionais profissionais={profissionais.slice(0, 48)} />
+  </div>
+</BaseLayout>

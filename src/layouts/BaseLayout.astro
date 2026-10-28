@@ -1,0 +1,58 @@
+---
+/**
+ * Layout base: metadados, cabeçalho, conteúdo e rodapé.
+ * A URL canônica só é emitida quando existe URL pública configurada —
+ * nunca inventamos um domínio.
+ */
+import '../styles/global.css';
+import Cabecalho from '../components/Cabecalho.astro';
+import Rodape from '../components/Rodape.astro';
+import { siteConfig } from '../config/site';
+
+interface Props {
+  titulo?: string;
+  descricao?: string;
+  /** Marca como noindex (ex.: páginas de resultado com filtros). */
+  noindex?: boolean;
+}
+
+const { titulo, descricao, noindex = false } = Astro.props;
+
+const tituloCompleto = titulo
+  ? `${titulo} | ${siteConfig.nome}`
+  : `${siteConfig.nome} — Encontre profissionais autônomos em todo o Brasil`;
+
+const descricaoFinal = descricao ?? siteConfig.descricao;
+const canonical = Astro.site ? new URL(Astro.url.pathname, Astro.site).href : null;
+const ogUrl = canonical;
+---
+
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{tituloCompleto}</title>
+    <meta name="description" content={descricaoFinal} />
+    <meta name="theme-color" content="#0f766e" />
+    {noindex && <meta name="robots" content="noindex, follow" />}
+    {canonical && <link rel="canonical" href={canonical} />}
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="sitemap" href="/sitemap.xml" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta property="og:site_name" content={siteConfig.nome} />
+    <meta property="og:title" content={tituloCompleto} />
+    <meta property="og:description" content={descricaoFinal} />
+    {ogUrl && <meta property="og:url" content={ogUrl} />}
+  </head>
+  <body>
+    <a class="pular-conteudo" href="#conteudo">Pular para o conteúdo principal</a>
+    <Cabecalho />
+    <main id="conteudo">
+      <slot />
+    </main>
+    <Rodape />
+  </body>
+</html>

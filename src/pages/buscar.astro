@@ -1,0 +1,272 @@
+---
+/**
+ * Página de busca nacional. O formulário é renderizado no servidor e o
+ * motor de busca roda no navegador: quando há um filtro de UF, carrega
+ * apenas o arquivo público daquele estado (/data/uf/uf.json); caso
+ * contrário, o catálogo completo. Busca sem diferenciação de acentos,
+ * filtros combináveis, carregamento progressivo e URL compartilhável.
+ */
+import BaseLayout from '../layouts/BaseLayout.astro';
+import FiltrosBusca from '../components/FiltrosBusca.astro';
+import { siteConfig } from '../config/site';
+import { CATEGORIAS } from '../config/categorias';
+import { carregarCatalogo } from '../lib/catalogo-server';
+import { categoriasDisponiveis } from '../lib/busca';
+import { slug } from '../lib/normalizar';
+
+const { catalogo } = carregarCatalogo();
+const CATEGORIAS_CONHECIDAS = new Set(CATEGORIAS.map((c) => slug(c.nome)));
+const categoriasExtras = categoriasDisponiveis(catalogo.profissionais)
+  .filter((c) => !CATEGORIAS_CONHECIDAS.has(c.slug))
+  .map((c) => ({ slug: c.slug, nome: c.nome }));
+---
+
+<BaseLayout
+  titulo="Encontrar profissionais"
+  descricao="Busque profissionais autônomos por serviço, categoria, estado e município em todo o Brasil e contate diretamente pelo WhatsApp."
+>
+  <div class="container">
+    <h1>Encontrar profissionais</h1>
+    <p class="texto-suave" style="margin-bottom:0;">
+      Busca por texto, estado, município e categoria — ignora acentos.
+    </p>
+
+    <FiltrosBusca modo="busca" categoriasExtras={categoriasExtras} />
+
+    <div class="linha-botoes margem-superior" style="justify-content: space-between;">
+      <p class="resultado__resumo" id="resultado-resumo" role="status" aria-live="polite">
+        Carregando…
+      </p>
+      <button type="button" class="botao botao--discreto" id="botao-limpar" hidden>
+        Limpar filtros
+      </button>
+    </div>
+
+    <div id="resultado-lista" class="resultados__lista" data-mensagem={siteConfig.mensagemWhatsApp}>
+      <div class="carregando" id="resultado-carregando">Carregando profissionais…</div>
+    </div>
+
+    <div class="resultados__mais">
+      <button type="button" class="botao botao--primario" id="botao-carregar-mais" hidden>
+        Carregar mais resultados
+      </button>
+    </div>
+
+    <noscript>
+      <div class="aviso aviso--atencao">
+        A busca interativa precisa de JavaScript.{' '}
+        <a href="/">Volte ao início</a> para navegar pelas categorias.
+      </div>
+    </noscript>
+  </div>
+</BaseLayout>
+
+<script>
+  import { analisarCatalogo, type Profissional } from '../lib/catalogo-parse';
+  import { combinarFiltros, municipiosDisponiveis } from '../lib/busca';
+  import { cartaoHTML } from '../lib/cartao-html';
+
+  const POR_PAGINA = 12;
+
+  // Elementos fixos desta página (marcação acima garante a existência).
+  const form = document.querySelector<HTMLFormElement>('[data-filtros="busca"]')!;
+  const entradaTexto = form.querySelector<HTMLInputElement>('input[name="q"]')!;
+  const seletorUf = form.querySelector<HTMLSelectElement>('[data-seletor-uf]')!;
+  const seletorMunicipio = form.querySelector<HTMLSelectElement>('[data-seletor-municipio]')!;
+  const seletorCategoria = form.querySelector<HTMLSelectElement>('[data-seletor-categoria]')!;
+  const resumo = document.getElementById('resultado-resumo')!;
+  const lista = document.getElementById('resultado-lista')!;
+  const carregando = document.getElementById('resultado-carregando');
+  const botaoMais = document.getElementById('botao-carregar-mais')!;
+  const botaoLimpar = document.getElementById('botao-limpar')!;
+  const mensagemWhatsApp = lista.dataset.mensagem ?? '';
+
+  /** Cache dos conjuntos de dados já baixados. */
+  const cache = new Map<string, Profissional[]>();
+  let dadosAtuais: Profissional[] = [];
+  let visiveis = POR_PAGINA;
+
+  async function carregarDados(uf: string): Promise<Profissional[]> {
+    const chave = uf || '*';
+    const emCache = cache.get(chave);
+    if (emCache) return emCache;
+    const url = uf ? `/data/uf/${uf.toLowerCase()}.json` : '/data/catalogo.json';
+    const resposta = await fetch(url);
+    if (resposta.status === 404) {
+      cache.set(chave, []);
+      return [];
+    }
+    if (!resposta.ok) throw new Error(`Falha ao carregar ${url} (HTTP ${resposta.status})`);
+    const dados: unknown = await resposta.json();
+    const resultado = analisarCatalogo(dados);
+    if (!resultado.ok) throw new Error(`Dados públicos inválidos: ${resultado.erros[0] ?? ''}`);
+    cache.set(chave, resultado.catalogo.profissionais);
+    return resultado.catalogo.profissionais;
+  }
+
+  function filtrosAtuais() {
+    return {
+      texto: entradaTexto.value,
+      uf: seletorUf.value,
+      municipio: seletorMunicipio.value,
+      categoria: seletorCategoria.value,
+    };
+  }
+
+  function atualizarURL() {
+    const filtros = filtrosAtuais();
+    const url = new URL('/buscar/', window.location.href);
+    if (filtros.texto.trim()) url.searchParams.set('q', filtros.texto.trim());
+    if (filtros.uf) url.searchParams.set('uf', filtros.uf);
+    if (filtros.municipio) url.searchParams.set('municipio', filtros.municipio);
+    if (filtros.categoria) url.searchParams.set('categoria', filtros.categoria);
+    window.history.replaceState(null, '', url);
+  }
+
+  function opcoesMunicipio(preservar: string) {
+    const municipalidades = municipiosDisponiveis(dadosAtuais);
+    if (municipalidades.length === 0) {
+      seletorMunicipio.disabled = true;
+      seletorMunicipio.innerHTML = '<option value="">Nenhum município disponível</option>';
+      return;
+    }
+    seletorMunicipio.disabled = false;
+    seletorMunicipio.innerHTML =
+      '<option value="">Todos os municípios</option>' +
+      municipalidades
+        .map((m) => `<option value="${m.slug}">${m.nome}</option>`)
+        .join('');
+    if (preservar && municipalidades.some((m) => m.slug === preservar)) {
+      seletorMunicipio.value = preservar;
+    } else {
+      seletorMunicipio.value = '';
+    }
+  }
+
+  function renderizar() {
+    const filtros = filtrosAtuais();
+    const resultados = combinarFiltros(dadosAtuais, filtros);
+    visiveis = Math.min(visiveis, Math.max(resultados.length, POR_PAGINA));
+    const pagina = resultados.slice(0, visiveis);
+
+    lista.innerHTML = pagina.map((p) => cartaoHTML(p, mensagemWhatsApp)).join('');
+
+    const temFiltro = Boolean(filtros.texto.trim() || filtros.uf || filtros.municipio || filtros.categoria);
+    botaoLimpar.hidden = !temFiltro;
+    botaoMais.hidden = visiveis >= resultados.length;
+    if (botaoMais.hidden === false) {
+      botaoMais.textContent = `Carregar mais resultados (${resultados.length - visiveis} restantes)`;
+    }
+
+    if (!filtros.uf && dadosAtuais.length === 0) {
+      // Catálogo inteiro vazio (nenhuma requisição por UF feita).
+      resumo.textContent = '';
+      lista.innerHTML = `
+        <div class="estado-vazio" style="grid-column: 1 / -1;">
+          <h2>Catálogo vazio</h2>
+          <p>Ainda não há profissionais publicados.</p>
+          <p><a class="botao botao--primario" href="/cadastrar/">Cadastrar meu serviço</a></p>
+        </div>`;
+      return;
+    }
+
+    if (resultados.length === 0) {
+      resumo.textContent = 'Nenhum profissional encontrado para essa busca.';
+      lista.innerHTML = `
+        <div class="estado-vazio" style="grid-column: 1 / -1;">
+          <h2>Nenhum resultado</h2>
+          <p>Tente outros termos, remova alguns filtros ou selecione “Todos os estados”.</p>
+          <p><button type="button" class="botao botao--discreto" id="botao-limpar-interno">Limpar filtros</button></p>
+        </div>`;
+      lista.querySelector('#botao-limpar-interno')?.addEventListener('click', limpar);
+      return;
+    }
+
+    resumo.textContent = `${resultados.length} ${resultados.length === 1 ? 'profissional encontrado' : 'profissionais encontrados'}`;
+  }
+
+  function limpar() {
+    form.reset();
+    void recarregar(false);
+  }
+
+  async function recarregar(trocouUF: boolean) {
+    const uf = seletorUf.value;
+    carregando?.remove();
+    try {
+      dadosAtuais = await carregarDados(uf);
+    } catch (erro) {
+      resumo.textContent = 'Não foi possível carregar os profissionais agora.';
+      lista.innerHTML = `
+        <div class="aviso aviso--erro" style="grid-column: 1 / -1;">
+          <strong>Erro ao carregar os dados.</strong> Verifique sua conexão e
+          tente novamente em instantes.
+        </div>`;
+      botaoMais.hidden = true;
+      return;
+    }
+    opcoesMunicipio(trocouUF ? '' : seletorMunicipio.value);
+    visiveis = POR_PAGINA;
+    renderizar();
+    atualizarURL();
+  }
+
+  // Estado inicial a partir da URL (compartilhável).
+  const parametros = new URLSearchParams(window.location.search);
+  if (parametros.get('q')) entradaTexto.value = parametros.get('q')!;
+  const ufInicial = (parametros.get('uf') ?? '').toUpperCase();
+  if (ufInicial && [...seletorUf.options].some((o) => o.value === ufInicial)) {
+    seletorUf.value = ufInicial;
+  }
+  const categoriaInicial = parametros.get('categoria') ?? '';
+  if (categoriaInicial && [...seletorCategoria.options].some((o) => o.value === categoriaInicial)) {
+    seletorCategoria.value = categoriaInicial;
+  }
+
+  // O município é aplicado após o carregamento das opções.
+  const municipioInicial = parametros.get('municipio') ?? '';
+  void recarregar(true).then(() => {
+    if (municipioInicial && [...seletorMunicipio.options].some((o) => o.value === municipioInicial)) {
+      seletorMunicipio.value = municipioInicial;
+      visiveis = POR_PAGINA;
+      renderizar();
+    }
+  });
+
+  // Eventos.
+  let temporizador: ReturnType<typeof setTimeout> | undefined;
+  entradaTexto.addEventListener('input', () => {
+    clearTimeout(temporizador);
+    temporizador = setTimeout(() => {
+      visiveis = POR_PAGINA;
+      renderizar();
+      atualizarURL();
+    }, 250);
+  });
+
+  seletorUf.addEventListener('change', () => void recarregar(true));
+  seletorMunicipio.addEventListener('change', () => {
+    visiveis = POR_PAGINA;
+    renderizar();
+    atualizarURL();
+  });
+  seletorCategoria.addEventListener('change', () => {
+    visiveis = POR_PAGINA;
+    renderizar();
+    atualizarURL();
+  });
+
+  form.addEventListener('submit', (evento) => {
+    evento.preventDefault();
+    visiveis = POR_PAGINA;
+    renderizar();
+    atualizarURL();
+  });
+
+  botaoMais.addEventListener('click', () => {
+    visiveis += POR_PAGINA;
+    renderizar();
+  });
+
+  botaoLimpar.addEventListener('click', limpar);
+</script>

@@ -1,0 +1,19 @@
+---
+/**
+ * Cartão de profissional para páginas geradas no build. O HTML vem de
+ * src/lib/cartao-html.ts — a mesma fonte usada pela busca no navegador —
+ * garantindo escape consistente e nenhuma duplicação de marcação.
+ */
+import type { Profissional } from '../lib/catalogo-parse';
+import { cartaoHTML } from '../lib/cartao-html';
+import { siteConfig } from '../config/site';
+
+interface Props {
+  profissional: Profissional;
+}
+
+const { profissional } = Astro.props;
+const html = cartaoHTML(profissional, siteConfig.mensagemWhatsApp);
+---
+
+<Fragment set:html={html} />

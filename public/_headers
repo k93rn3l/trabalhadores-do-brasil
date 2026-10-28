@@ -1,0 +1,16 @@
+# Cabeçalhos de segurança e cache para o Cloudflare Pages.
+# Arquivos iniciados com "_" não são servidos publicamente — apenas interpretados pela plataforma.
+
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+
+# Assets com hash no nome: cache longo e imutável
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Catálogo público: dados precisam estar frescos (sincronização horária)
+/data/*
+  Cache-Control: public, max-age=0, must-revalidate

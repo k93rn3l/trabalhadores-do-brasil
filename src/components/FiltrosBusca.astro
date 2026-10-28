@@ -1,0 +1,100 @@
+---
+/**
+ * Formulário de filtros de busca, usado na página inicial (envio GET para
+ * /buscar) e na página de busca (controlado por JavaScript no cliente).
+ * O seletor de municípios é populado dinamicamente conforme o estado e os
+ * dados disponíveis — sem serviços externos em tempo de execução.
+ */
+import { UFS, NOMES_POR_UF } from '../lib/estados';
+import { slug } from '../lib/normalizar';
+import { CATEGORIAS } from '../config/categorias';
+
+interface Props {
+  /** 'inicio' envia por GET; 'busca' é controlado pelo script da página. */
+  modo: 'inicio' | 'busca';
+  /** Categorias extras vindas dos dados (além das configuradas). */
+  categoriasExtras?: { slug: string; nome: string }[];
+  valores?: { q?: string; uf?: string; municipio?: string; categoria?: string };
+}
+
+const { modo, categoriasExtras = [], valores = {} } = Astro.props;
+
+const idForm = modo === 'busca' ? 'form-busca' : 'form-busca-inicio';
+const classesExtras = modo === 'busca' ? 'filtros filtros--linha' : 'filtros filtros--linha';
+
+const categoriasConhecidas = new Map<string, string>();
+for (const categoria of CATEGORIAS) {
+  categoriasConhecidas.set(slug(categoria.nome), categoria.nome);
+}
+for (const extra of categoriasExtras) {
+  if (!categoriasConhecidas.has(extra.slug)) categoriasConhecidas.set(extra.slug, extra.nome);
+}
+const opcoesCategoria = [...categoriasConhecidas.entries()].sort((a, b) =>
+  a[1].localeCompare(b[1], 'pt-BR'),
+);
+---
+
+<form
+  id={idForm}
+  class={classesExtras}
+  role="search"
+  action="/buscar/"
+  method="get"
+  data-filtros={modo}
+>
+  <label class="campo">
+    <span class="campo__rotulo">Serviço, profissão ou nome</span>
+    <input
+      type="search"
+      name="q"
+      value={valores.q ?? ''}
+      placeholder="Ex.: eletricista, diarista, pintor…"
+      autocomplete="off"
+    />
+  </label>
+
+  <label class="campo">
+    <span class="campo__rotulo">Estado</span>
+    <select name="uf" data-seletor-uf>
+      <option value="">Todos os estados</option>
+      {
+        UFS.map((uf) => (
+          <option value={uf} selected={valores.uf === uf}>
+            {uf} — {NOMES_POR_UF[uf]}
+          </option>
+        ))
+      }
+    </select>
+  </label>
+
+  <label class="campo">
+    <span class="campo__rotulo">Município</span>
+    <select name="municipio" data-seletor-municipio disabled>
+      <option value="">Selecione um estado</option>
+    </select>
+  </label>
+
+  {
+    modo === 'busca' && (
+      <label class="campo">
+        <span class="campo__rotulo">Categoria</span>
+        <select name="categoria" data-seletor-categoria>
+          <option value="">Todas as categorias</option>
+          {opcoesCategoria.map(([valor, nome]) => (
+            <option value={valor} selected={valores.categoria === valor}>
+              {nome}
+            </option>
+          ))}
+        </select>
+      </label>
+    )
+  }
+
+  <button type="submit" class="botao botao--primario">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="7"></circle>
+      <path d="m20 20-3.5-3.5"></path>
+    </svg>
+    Buscar
+  </button>
+</form>

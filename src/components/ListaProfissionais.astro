@@ -1,0 +1,15 @@
+---
+/** Grade de cartões de profissionais (uso nas páginas estáticas de listagem). */
+import type { Profissional } from '../lib/catalogo-parse';
+import CartaoProfissional from './CartaoProfissional.astro';
+
+interface Props {
+  profissionais: Profissional[];
+}
+
+const { profissionais } = Astro.props;
+---
+
+<div class="grade-cartoes">
+  {profissionais.map((profissional) => <CartaoProfissional profissional={profissional} />)}
+</div>

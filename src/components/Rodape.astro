@@ -1,0 +1,36 @@
+---
+/** Rodapé compacto: uma linha de apresentação, links e aviso legal curto. */
+import { siteConfig, recursoConfigurado } from '../config/site';
+
+const anoAtual = new Date().getFullYear();
+---
+
+<footer class="rodape">
+  <div class="container">
+    <p style="margin:0;">
+      <strong>{siteConfig.nome}</strong> — divulgação gratuita de profissionais
+      autônomos. Não intermediamos pagamentos, contratações ou garantimos a
+      qualidade dos serviços.
+    </p>
+    <ul class="rodape__lista">
+      <li><a href="/">Início</a></li>
+      <li><a href="/buscar/">Buscar</a></li>
+      <li><a href="/cadastrar/">Cadastrar serviço</a></li>
+      <li><a href="/solicitar-alteracao/">Alterar ou excluir cadastro</a></li>
+      <li><a href="/denunciar/">Denunciar</a></li>
+      <li><a href="/termos/">Termos</a></li>
+      <li><a href="/privacidade/">Privacidade</a></li>
+      {
+        recursoConfigurado(siteConfig.contatoEmail) && (
+          <li>
+            <a href={`mailto:${siteConfig.contatoEmail}`}>Contato</a>
+          </li>
+        )
+      }
+    </ul>
+    <p class="rodape__nota">
+      © {anoAtual} {siteConfig.nome}. A aprovação de um cadastro é apenas revisão
+      das informações declaradas — não é verificação de identidade ou qualidade.
+    </p>
+  </div>
+</footer>

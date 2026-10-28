@@ -1,0 +1,30 @@
+---
+/** Cabeçalho simples: marca + navegação inline (estilo Wikipedia). */
+import { siteConfig } from '../config/site';
+
+const caminho = Astro.url.pathname;
+const links = [
+  { href: '/', rotulo: 'Início', ativo: caminho === '/' },
+  { href: '/buscar/', rotulo: 'Buscar profissionais', ativo: caminho.startsWith('/buscar') },
+  { href: '/cadastrar/', rotulo: 'Cadastrar serviço', ativo: caminho.startsWith('/cadastrar') },
+];
+---
+
+<header class="cabecalho">
+  <div class="container cabecalho__barra">
+    <a class="marca" href="/">{siteConfig.nome}</a>
+    <nav aria-label="Navegação principal">
+      <ul class="cabecalho__lista">
+        {
+          links.map((link) => (
+            <li>
+              <a href={link.href} aria-current={link.ativo ? 'page' : undefined}>
+                {link.rotulo}
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+    </nav>
+  </div>
+</header>

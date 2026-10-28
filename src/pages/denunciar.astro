@@ -1,0 +1,60 @@
+---
+/** Denúncia de cadastros — versão enxuta. */
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { siteConfig, recursoConfigurado } from '../config/site';
+
+const formConfigurado = recursoConfigurado(siteConfig.urlFormDenuncia);
+---
+
+<BaseLayout
+  titulo="Denunciar um cadastro"
+  descricao="Denuncie número incorreto, informação enganosa, cadastro duplicado ou uso indevido de dados."
+>
+  <div class="container">
+    <h1>Denunciar um cadastro</h1>
+
+    <p>Motivos comuns:</p>
+    <ul>
+      <li>WhatsApp incorreto ou fora de serviço;</li>
+      <li>Informações enganosas ou cadastro duplicado;</li>
+      <li>Uso indevido de dados pessoais de terceiros.</li>
+    </ul>
+
+    {
+      formConfigurado ? (
+        <p class="linha-botoes">
+          <a class="botao botao--primario" href={siteConfig.urlFormDenuncia} target="_blank" rel="noopener noreferrer">
+            Abrir formulário de denúncia
+          </a>
+        </p>
+      ) : recursoConfigurado(siteConfig.contatoEmail) ? (
+        <p>
+          Escreva para <a href={`mailto:${siteConfig.contatoEmail}`}>{siteConfig.contatoEmail}</a>{' '}
+          com o assunto “Denúncia”, descrevendo o problema e, se possível, o link do perfil.
+        </p>
+      ) : (
+        <div class="aviso aviso--atencao">
+          O canal de denúncias ainda não está configurado — volte em breve.
+        </div>
+      )
+    }
+
+    <p class="texto-suave">
+      Denúncias são analisadas pela moderação e podem pausar ou remover o
+      cadastro. Seu contato não é repassado ao denunciado.
+    </p>
+  </div>
+</BaseLayout>
+
+<script>
+  // Chegou de um perfil com ?id=... mostra a referência do cadastro.
+  const parametros = new URLSearchParams(window.location.search);
+  const id = parametros.get('id');
+  if (id && /^[a-z0-9-]{4,64}$/i.test(id)) {
+    const aviso = document.createElement('p');
+    aviso.className = 'aviso aviso--info';
+    aviso.innerHTML = 'Denunciando o cadastro <strong></strong> — mantenha esse código na mensagem.';
+    aviso.querySelector('strong')!.textContent = id;
+    document.querySelector('h1')?.after(aviso);
+  }
+</script>

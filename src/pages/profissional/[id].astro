@@ -1,0 +1,162 @@
+---
+/** Perfil público do profissional — enxuto, sem indicadores fictícios. */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Breadcrumbs from '../../components/Breadcrumbs.astro';
+import ListaProfissionais from '../../components/ListaProfissionais.astro';
+import { carregarCatalogo } from '../../lib/catalogo-server';
+import { linkWhatsApp } from '../../lib/whatsapp';
+import { siteConfig } from '../../config/site';
+import { NOMES_POR_UF } from '../../lib/estados';
+import { formatarData } from '../../lib/formato';
+import { montarURLBusca } from '../../lib/busca';
+
+export function getStaticPaths() {
+  const { catalogo } = carregarCatalogo();
+  return catalogo.profissionais.map((profissional) => ({
+    params: { id: profissional.id },
+    props: { profissional },
+  }));
+}
+
+const { profissional } = Astro.props;
+const { catalogo } = carregarCatalogo();
+const urlPerfil = Astro.site ? new URL(Astro.url.pathname, Astro.site).href : null;
+
+const relacionados = catalogo.profissionais
+  .filter((p) => p.categoriaSlug === profissional.categoriaSlug && p.id !== profissional.id)
+  .slice(0, 3);
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'ProfessionalService',
+  name: profissional.nome,
+  description: profissional.descricao.slice(0, 300),
+  telephone: `+${profissional.whatsapp}`,
+  category: profissional.categoria,
+  serviceType: profissional.profissao,
+  ...(urlPerfil ? { url: urlPerfil } : {}),
+  address: {
+    '@type': 'PostalAddress',
+    addressLocality: profissional.municipio,
+    addressRegion: profissional.uf,
+    addressCountry: 'BR',
+  },
+  areaServed: [
+    profissional.municipio,
+    ...profissional.regioes,
+    ...profissional.municipiosAtendidos,
+  ].slice(0, 10),
+};
+---
+
+<BaseLayout
+  titulo={`${profissional.nome} — ${profissional.profissao} em ${profissional.municipio}/${profissional.uf}`}
+  descricao={`${profissional.profissao} em ${profissional.municipio}/${profissional.uf}. ${profissional.descricao.slice(0, 140)}`}
+>
+  <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
+
+  <div class="container">
+    <Breadcrumbs
+      itens={[
+        { rotulo: profissional.categoria, href: `/categoria/${profissional.categoriaSlug}/` },
+        { rotulo: profissional.nome },
+      ]}
+    />
+
+    <article class="perfil">
+      <div class="perfil__cabecalho">
+        <h1>{profissional.nome}</h1>
+        <p>
+          <strong>{profissional.profissao}</strong> — {profissional.municipio},
+          {NOMES_POR_UF[profissional.uf]} ({profissional.uf})
+          {profissional.remoto && ' · atende online'}
+        </p>
+
+        {
+          profissional.regioes.length > 0 && (
+            <p class="texto-suave" style="margin-bottom:0.4rem;">
+              <strong>Atende:</strong> {profissional.regioes.join(', ')}
+            </p>
+          )
+        }
+        {
+          profissional.municipiosAtendidos.length > 0 && (
+            <p class="texto-suave" style="margin-bottom:0.4rem;">
+              <strong>Atende também:</strong> {profissional.municipiosAtendidos.join(', ')}
+            </p>
+          )
+        }
+
+        <h2 style="margin-top:1rem;">Sobre o serviço</h2>
+        <p style="white-space: pre-line; margin-bottom:0.4rem;">{profissional.descricao}</p>
+        <p class="texto-suave" style="font-size:0.88rem;">
+          Atualizado em {formatarData(profissional.atualizadoEm)} · informações
+          declaradas pelo próprio profissional.
+        </p>
+      </div>
+
+      <aside class="perfil__lateral" aria-label="Contato e ações">
+        <a
+          class="botao botao--whatsapp"
+          href={linkWhatsApp(profissional.whatsapp, siteConfig.mensagemWhatsApp)}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Conversar no WhatsApp
+        </a>
+        <button type="button" class="botao botao--discreto" data-botao-compartilhar>
+          Compartilhar perfil
+        </button>
+        <dl class="lista-dados">
+          <div>
+            <dt>Categoria</dt>
+            <dd><a href={`/categoria/${profissional.categoriaSlug}/`}>{profissional.categoria}</a></dd>
+          </div>
+          <div>
+            <dt>Localização</dt>
+            <dd><a href={`/estado/${profissional.uf.toLowerCase()}/`}>{profissional.municipio}/{profissional.uf}</a></dd>
+          </div>
+        </dl>
+        <p class="texto-suave" style="margin:0; font-size:0.85rem;">
+          <a href={`/denunciar/?id=${profissional.id}`}>Denunciar</a> ·{' '}
+          <a href="/solicitar-alteracao/">É o profissional? Solicitar alteração</a>
+        </p>
+      </aside>
+    </article>
+
+    {
+      relacionados.length > 0 && (
+        <section class="secao" aria-labelledby="titulo-relacionados">
+          <h2 id="titulo-relacionados">Mais em {profissional.categoria.toLowerCase()}</h2>
+          <ListaProfissionais profissionais={relacionados} />
+          <p>
+            <a href={montarURLBusca({ categoria: profissional.categoriaSlug })}>
+              Ver todos em {profissional.categoria}
+            </a>
+          </p>
+        </section>
+      )
+    }
+  </div>
+</BaseLayout>
+
+<script>
+  const botao = document.querySelector('[data-botao-compartilhar]');
+  botao?.addEventListener('click', async () => {
+    const url = window.location.href;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: document.title, url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      const original = botao.textContent;
+      botao.textContent = 'Link copiado!';
+      setTimeout(() => {
+        botao.textContent = original;
+      }, 2500);
+    } catch {
+      window.alert(`Copie o link do perfil:\n${url}`);
+    }
+  });
+</script>

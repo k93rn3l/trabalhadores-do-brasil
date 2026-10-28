@@ -1,0 +1,4 @@
+# Redirecionamentos do Cloudflare Pages (um por linha: origem destino codigo)
+# Exemplos para uso futuro:
+# /antigo-caminho /novo-caminho 301
+# /perfil /profissional 302

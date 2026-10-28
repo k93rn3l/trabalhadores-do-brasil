@@ -1,0 +1,29 @@
+{
+  "name": "catalogo-profissionais",
+  "version": "1.0.0",
+  "description": "Plataforma nacional, gratuita e estática de divulgação de profissionais autônomos, com cadastro via Google Forms, moderação via Google Sheets e publicação no Cloudflare Pages.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:python": "pytest scripts/tests -q",
+    "sync": "python scripts/sync_catalogo.py --saida public/data",
+    "sync:dry": "python scripts/sync_catalogo.py --saida public/data --dry-run --verbose"
+  },
+  "dependencies": {
+    "astro": "^5.1.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "@types/node": "^26.6.5",
+    "typescript": "^5.9.3",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

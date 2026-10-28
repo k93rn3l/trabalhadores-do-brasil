@@ -1,0 +1,44 @@
+---
+/** Cadastro: explicação mínima + formulário externo configurável. */
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { siteConfig, recursoConfigurado } from '../config/site';
+
+const formConfigurado = recursoConfigurado(siteConfig.urlFormCadastro);
+---
+
+<BaseLayout
+  titulo="Cadastrar meu serviço"
+  descricao="Cadastre gratuitamente seu serviço como profissional autônomo no catálogo."
+>
+  <div class="container">
+    <h1>Cadastre seu serviço</h1>
+    <p class="texto-suave">
+      Grátis e sem criar conta. Preencha o formulário; após revisão, seu perfil
+      é publicado.
+    </p>
+
+    {
+      formConfigurado ? (
+        <p class="linha-botoes">
+          <a class="botao botao--primario" href={siteConfig.urlFormCadastro} target="_blank" rel="noopener noreferrer">
+            Abrir formulário de cadastro
+          </a>
+        </p>
+      ) : (
+        <div class="aviso aviso--atencao">
+          O formulário de cadastro ainda não está configurado — volte em breve.
+        </div>
+      )
+    }
+
+    <section class="secao" aria-labelledby="titulo-dados">
+      <h2 id="titulo-dados">Seus dados</h2>
+      <ul>
+        <li><strong>Publicados:</strong> nome, categoria, profissão, descrição, localização e WhatsApp.</li>
+        <li><strong>Privados:</strong> e-mail e endereço comercial (nunca aparecem no site).</li>
+        <li>Não pedimos CPF, RG ou endereço residencial.</li>
+        <li>Correção, pausa ou exclusão a qualquer momento — veja <a href="/solicitar-alteracao/">alterar ou excluir cadastro</a> e a <a href="/privacidade/">Política de Privacidade</a>.</li>
+      </ul>
+    </section>
+  </div>
+</BaseLayout>

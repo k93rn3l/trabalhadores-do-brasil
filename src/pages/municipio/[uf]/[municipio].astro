@@ -1,0 +1,52 @@
+---
+/** Página por município (apenas quando há profissionais). */
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import Breadcrumbs from '../../../components/Breadcrumbs.astro';
+import ListaProfissionais from '../../../components/ListaProfissionais.astro';
+import { carregarCatalogo } from '../../../lib/catalogo-server';
+import { NOMES_POR_UF, type UF } from '../../../lib/estados';
+import { montarURLBusca } from '../../../lib/busca';
+
+export function getStaticPaths() {
+  const { catalogo } = carregarCatalogo();
+  const porMunicipio = new Map<string, { uf: UF; municipio: string; slug: string; itens: typeof catalogo.profissionais }>();
+  for (const profissional of catalogo.profissionais) {
+    const chave = `${profissional.uf}/${profissional.municipioSlug}`;
+    const atual = porMunicipio.get(chave);
+    if (atual) atual.itens.push(profissional);
+    else
+      porMunicipio.set(chave, {
+        uf: profissional.uf,
+        municipio: profissional.municipio,
+        slug: profissional.municipioSlug,
+        itens: [profissional],
+      });
+  }
+  return [...porMunicipio.entries()].map(([chave, dados]) => ({
+    params: { uf: dados.uf.toLowerCase(), municipio: chave.split('/')[1] },
+    props: { uf: dados.uf, municipio: dados.municipio, municipioSlug: dados.slug, profissionais: dados.itens },
+  }));
+}
+
+const { uf, municipio, municipioSlug, profissionais } = Astro.props;
+---
+
+<BaseLayout
+  titulo={`Profissionais autônomos em ${municipio} — ${uf}`}
+  descricao={`Profissionais autônomos publicados em ${municipio}/${uf}.`}
+>
+  <div class="container">
+    <Breadcrumbs
+      itens={[{ rotulo: NOMES_POR_UF[uf], href: `/estado/${uf.toLowerCase()}/` }, { rotulo: municipio }]}
+    />
+
+    <h1>{municipio} — {uf}</h1>
+    <p class="texto-suave">
+      {profissionais.length}{' '}
+      {profissionais.length === 1 ? 'profissional publicado' : 'profissionais publicados'} ·{' '}
+      <a href={montarURLBusca({ uf, municipio: municipioSlug })}>buscar com filtros</a>
+    </p>
+
+    <ListaProfissionais profissionais={profissionais} />
+  </div>
+</BaseLayout>

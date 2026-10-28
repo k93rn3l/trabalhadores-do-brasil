@@ -1,0 +1,148 @@
+---
+/**
+ * Política de Privacidade (LGPD). Os trechos destacados indicam dados
+ * institucionais que DEVEM ser preenchidos antes da publicação oficial.
+ */
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { siteConfig } from '../config/site';
+---
+
+<BaseLayout
+  titulo="Política de Privacidade"
+  descricao="Como o catálogo coleta, usa, publica e protege dados pessoais de profissionais, conforme a Lei Geral de Proteção de Dados (LGPD)."
+>
+  <div class="container">
+    <article class="conteudo-institucional">
+      <h1>Política de Privacidade</h1>
+      <p class="texto-suave">
+        Última atualização: <span class="pendente-preenchimento">[PREENCHER: data]</span>
+      </p>
+
+      <p>
+        Esta Política explica como o {siteConfig.nome} (“serviço”), operado por{' '}
+        <span class="pendente-preenchimento">[PREENCHER: nome do responsável / CNPJ]</span>,
+        trata dados pessoais, em conformidade com a Lei nº 13.709/2018 — Lei
+        Geral de Proteção de Dados Pessoais (LGPD).
+      </p>
+
+      <h2>1. Quais dados coletamos</h2>
+      <p>Coletamos apenas o mínimo necessário para divulgar serviços:</p>
+      <ul>
+        <li><strong>Dados públicos do profissional</strong> (fornecidos voluntariamente no cadastro): nome público ou comercial, categoria, profissão, descrição do serviço, estado, município, bairros/regiões atendidas, outros municípios atendidos, atendimento remoto e WhatsApp profissional.</li>
+        <li><strong>Dados administrativos</strong> (não publicados): e-mail de contato e, opcionalmente, endereço comercial; anotações internas de moderação.</li>
+      </ul>
+      <p>
+        <strong>Não coletamos</strong> CPF, RG, endereço residencial completo
+        nem dados sensíveis. Não utilizamos cookies de rastreamento,
+        publicidade ou ferramentas de análise invasivas. Os formulários são
+        hospedados pelo Google Forms, sujeitos à política de privacidade do
+        Google.
+      </p>
+
+      <h2>2. Para que usamos</h2>
+      <ul>
+        <li>Divulgar o serviço do profissional no catálogo público (finalidade principal);</li>
+        <li>Contato administrativo sobre o próprio cadastro (aprovação, correções, avisos);</li>
+        <li>Prevenção a fraudes e abusos (moderação e análise de denúncias).</li>
+      </ul>
+
+      <h2>3. Base legal e consentimento</h2>
+      <p>
+        A publicação de dados no catálogo ocorre exclusivamente com{' '}
+        <strong>consentimento explícito</strong> do profissional, registrado no
+        momento do cadastro (art. 7º, I e art. 11, I da LGPD). O consentimento
+        é específico e destacado: o formulário deixa claro quais campos serão
+        divulgados publicamente. O tratamento administrativo interno (revisão
+        e moderação) apoia-se no legítimo interesse de manter o catálogo
+        íntegro e seguro.
+      </p>
+
+      <h2>4. O que é publicado</h2>
+      <p>
+        Somente os campos listados no item 1 como “dados públicos” são
+        divulgados, e somente para cadastros <strong>aprovados, ativos e com
+        consentimento válido</strong>. E-mail administrativo, endereço
+        comercial informado opcionalmente e anotações internas{' '}
+        <strong>nunca</strong> são publicados.
+      </p>
+
+      <h2>5. Compartilhamento</h2>
+      <p>
+        Não vendemos, alugamos nem cedemos dados a terceiros. Os dados
+        públicos ficam acessíveis no site para qualquer visitante — essa é a
+        própria finalidade do serviço, autorizada pelo titular. A infraestrutura
+        de hospedagem (Cloudflare) e os formulários (Google) atuam como
+        operadores nos limites de suas funções.
+      </p>
+
+      <h2>6. Por quanto tempo guardamos</h2>
+      <p>
+        Dados de cadastros publicados permanecem enquanto o profissional
+        desejar a divulgação. Cadastros rejeitados ou excluídos são removidos
+        da planilha administrativa em até{' '}
+        <span class="pendente-preenchimento">[PREENCHER: prazo, ex.: 90 dias]</span>{' '}
+        após a decisão, permanecendo apenas registros essenciais de moderação,
+        sem dados de contato.
+      </p>
+
+      <h2>7. Seus direitos (LGPD, art. 18)</h2>
+      <p>Você pode solicitar, a qualquer momento:</p>
+      <ul>
+        <li>Confirmação da existência de tratamento e acesso aos seus dados;</li>
+        <li>Correção de dados incompletos, inexatos ou desatualizados;</li>
+        <li>Anonimização, bloqueio ou eliminação de dados desnecessários;</li>
+        <li>Portabilidade dos dados fornecidos;</li>
+        <li>Eliminação dos dados tratados com base no consentimento;</li>
+        <li>Revogação do consentimento (o que interrompe imediatamente a publicação).</li>
+      </ul>
+      <p>
+        Canal para exercer direitos:{' '}
+        <span class="pendente-preenchimento">[PREENCHER: e-mail institucional]</span>{' '}
+        ou a página <a href="/solicitar-alteracao/">Solicitar alteração ou exclusão</a>.
+        Responderemos em até 15 dias.
+      </p>
+
+      <h2>8. Retirada do consentimento</h2>
+      <p>
+        A qualquer momento você pode pedir a retirada do consentimento e a
+        remoção do catálogo. A retirada é gratuita e imediata na publicação:
+        o perfil deixa de ser gerado na próxima sincronização (no máximo 1
+        hora depois). A retirada não retroage sobre publicações passadas
+        feitas com consentimento válido.
+      </p>
+
+      <h2>9. Segurança</h2>
+      <p>
+        A planilha com os cadastros é privada e acessada apenas pela equipe de
+        moderação, com autenticação. As credenciais de sincronização ficam em
+        cofre de segredos (GitHub Secrets) e nunca no código do site. O site é
+        servido integralmente por HTTPS. Medidas técnicas incluem validação e
+        sanitização de todos os dados publicados e proteção contra XSS.
+      </p>
+
+      <h2>10. Crianças e adolescentes</h2>
+      <p>
+        O serviço não é direcionado a menores de 18 anos para fins de
+        cadastro de profissionais.
+      </p>
+
+      <h2>11. Alterações desta política</h2>
+      <p>
+        Esta política pode ser atualizada; a data no topo da página indicará
+        a versão vigente. Mudanças relevantes serão comunicadas aos
+        profissionais cadastrados por e-mail administrativo.
+      </p>
+
+      <h2>12. Autoridade de proteção de dados</h2>
+      <p>
+        Você pode reclamar junto à Autoridade Nacional de Proteção de Dados
+        (ANPD) em <a href="https://www.gov.br/anpd" rel="noopener noreferrer" target="_blank">gov.br/anpd</a>.
+      </p>
+
+      <p class="texto-suave">
+        Contato do encarregado (DPO):{' '}
+        <span class="pendente-preenchimento">[PREENCHER: nome e e-mail do encarregado]</span>
+      </p>
+    </article>
+  </div>
+</BaseLayout>

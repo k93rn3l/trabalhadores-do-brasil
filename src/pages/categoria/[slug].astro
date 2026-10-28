@@ -1,0 +1,45 @@
+---
+/** Página de categoria (apenas quando há profissionais). */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Breadcrumbs from '../../components/Breadcrumbs.astro';
+import ListaProfissionais from '../../components/ListaProfissionais.astro';
+import { carregarCatalogo } from '../../lib/catalogo-server';
+import { categoriaPorSlug } from '../../config/categorias';
+import { slug as slugificar } from '../../lib/normalizar';
+import { montarURLBusca } from '../../lib/busca';
+
+export function getStaticPaths() {
+  const { catalogo } = carregarCatalogo();
+  const porCategoria = new Map<string, { nome: string; itens: typeof catalogo.profissionais }>();
+  for (const profissional of catalogo.profissionais) {
+    const atual = porCategoria.get(profissional.categoriaSlug);
+    if (atual) atual.itens.push(profissional);
+    else porCategoria.set(profissional.categoriaSlug, { nome: profissional.categoria, itens: [profissional] });
+  }
+  return [...porCategoria.entries()].map(([slugCategoria, dados]) => ({
+    params: { slug: slugCategoria },
+    props: { nome: dados.nome, profissionais: dados.itens },
+  }));
+}
+
+const { nome, profissionais } = Astro.props;
+const configuracao = categoriaPorSlug(slugificar(nome));
+---
+
+<BaseLayout
+  titulo={`${nome} — profissionais autônomos`}
+  descricao={configuracao?.descricao ?? `Profissionais autônomos de ${nome.toLowerCase()} no Brasil.`}
+>
+  <div class="container">
+    <Breadcrumbs itens={[{ rotulo: 'Categorias', href: '/#titulo-categorias' }, { rotulo: nome }]} />
+
+    <h1>{nome}</h1>
+    <p class="texto-suave">
+      {profissionais.length}{' '}
+      {profissionais.length === 1 ? 'profissional publicado' : 'profissionais publicados'} ·{' '}
+      <a href={montarURLBusca({ categoria: slugificar(nome) })}>filtrar por estado e município</a>
+    </p>
+
+    <ListaProfissionais profissionais={profissionais} />
+  </div>
+</BaseLayout>

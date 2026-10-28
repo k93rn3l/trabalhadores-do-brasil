@@ -1,0 +1,23 @@
+# Dependências e build
+node_modules/
+dist/
+.astro/
+
+# Ambiente — nunca versionar segredos
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Sistema e editor
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/

@@ -1,0 +1,7 @@
+# Dependências do sincronizador (scripts/sync_catalogo.py).
+# Instale com: pip install -r scripts/requirements.txt
+google-api-python-client>=2.100,<3
+google-auth>=2.23,<3
+
+# Testes
+pytest>=8,<9

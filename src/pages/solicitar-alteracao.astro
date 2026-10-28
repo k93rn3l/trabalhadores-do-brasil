@@ -1,0 +1,49 @@
+---
+/** Solicitação de alteração/exclusão — versão enxuta com verificação. */
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { siteConfig, recursoConfigurado } from '../config/site';
+
+const formConfigurado = recursoConfigurado(siteConfig.urlFormAlteracao);
+---
+
+<BaseLayout
+  titulo="Solicitar alteração ou exclusão do cadastro"
+  descricao="Correção, troca de WhatsApp, mudança de região, desativação ou exclusão do cadastro."
+>
+  <div class="container">
+    <h1>Alterar ou excluir meu cadastro</h1>
+
+    <p>Você pode solicitar:</p>
+    <ul>
+      <li>Correção de informações ou troca de WhatsApp;</li>
+      <li>Mudança de região atendida;</li>
+      <li>Desativação temporária ou exclusão definitiva (direito da LGPD).</li>
+    </ul>
+
+    {
+      formConfigurado ? (
+        <p class="linha-botoes">
+          <a class="botao botao--primario" href={siteConfig.urlFormAlteracao} target="_blank" rel="noopener noreferrer">
+            Abrir formulário de solicitação
+          </a>
+        </p>
+      ) : recursoConfigurado(siteConfig.contatoEmail) ? (
+        <p>
+          Escreva para <a href={`mailto:${siteConfig.contatoEmail}`}>{siteConfig.contatoEmail}</a>{' '}
+          informando o nome publicado, o WhatsApp atual e a alteração desejada.
+        </p>
+      ) : (
+        <div class="aviso aviso--atencao">
+          O canal de solicitações ainda não está configurado — volte em breve.
+        </div>
+      )
+    }
+
+    <p class="aviso aviso--info">
+      <strong>Segurança:</strong> alterações sensíveis (troca de WhatsApp,
+      exclusão) só são feitas após confirmar que o pedido partiu do titular —
+      pelo WhatsApp cadastrado, pelo e-mail administrativo registrado ou por
+      verificação simples de identidade.
+    </p>
+  </div>
+</BaseLayout>
