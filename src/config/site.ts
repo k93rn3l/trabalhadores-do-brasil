@@ -17,7 +17,7 @@ function texto(valor: string | undefined): string {
 
 export const siteConfig = {
   /** Nome da plataforma. Centralizado aqui de propósito: mude só este campo. */
-  nome: 'Profissionais Progressistas',
+  nome: 'Rede Autônoma',
   descricao:
     'Encontre profissionais autônomos em todo o Brasil: pesquise por profissão, categoria, estado e município e fale diretamente pelo WhatsApp. Cadastro gratuito.',
   palavrasChave: [

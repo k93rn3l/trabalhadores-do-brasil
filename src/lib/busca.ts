@@ -44,7 +44,7 @@ export function combinarFiltros(
     if (f.categoria && p.categoriaSlug !== f.categoria) return false;
     if (f.termos.length === 0) return true;
     const alvo = normalizarTexto(
-      [p.nome, p.profissao, p.categoria, p.descricao, p.municipio, ...p.regioes, ...p.municipiosAtendidos].join(' '),
+      [p.nome, p.profissao, p.categoria, p.descricao, p.municipio, ...p.bairros, ...p.outros_municipios].join(' '),
     );
     return f.termos.every((termo) => alvo.includes(termo));
   });

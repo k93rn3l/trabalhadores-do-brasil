@@ -2,24 +2,23 @@
 """
 Sincronizador: Google Sheets (privado) -> catálogo público JSON.
 
-Fluxo: autentica com conta de serviço -> lê a aba configurada -> valida
-cabeçalhos -> normaliza e valida registros -> publica SOMENTE cadastros
-APROVADOS, ativos e com consentimento válido -> escreve arquivos de forma
-atômica (nunca sobrescreve o catálogo em caso de falha).
+Planilha real: "Respostas ao formulário 1" do Google Forms
+"Cadastro de Profissionais Autônomos". Colunas identificadas por nome
+normalizado (nunca por posição), tolerando espaços extras nos cabeçalhos.
 
-Princípios:
-  - Fail-closed: qualquer erro de estrutura/autenticação interrompe sem
-    tocar nos arquivos existentes (código de saída 1).
-  - Minimização: apenas campos autorizados são exportados; e-mail,
-    endereço comercial, observações e dados de registros não aprovados
-    nunca saem da planilha.
-  - Logs sem dados pessoais: avisos referenciam linha e motivo, nunca o
-    conteúdo da célula.
+Regras de publicação (fail-closed): publica SOMENTE registros com
+STATUS=APROVADO, ATIVO=SIM, consentimento válido e campos essenciais
+corretos. Campo vazio nunca é interpreta como aprovação.
 
-Uso:
-  GOOGLE_SHEET_ID=... GOOGLE_SERVICE_ACCOUNT_JSON=... python scripts/sync_catalogo.py
-  python scripts/sync_catalogo.py --csv planilha.csv          # modo local/teste
-  python scripts/sync_catalogo.py --dry-run --verbose         # não escreve nada
+Modos de execução:
+  --csv arquivo.csv           lê de CSV local (testes/desenvolvimento)
+  --publicar                 grava o catálogo (produção)
+  --dry-run                  apenas simula e relata (nunca grava)
+  Sem --publicar e sem --csv  simulação automática (trava de 1ª publicação)
+
+Identificadores públicos: usa ID_PUBLICO da planilha quando preenchido e
+válido; caso contrário gera HMAC-SHA256(PUBLIC_ID_SECRET, carimbo|whatsapp),
+determinístico e sem expor telefone/carimbo.
 """
 
 from __future__ import annotations
@@ -27,6 +26,7 @@ from __future__ import annotations
 import argparse
 import csv as csv_modulo
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -37,8 +37,16 @@ from pathlib import Path
 from typing import Any
 
 VERSAO_CATALOGO = 1
+ARQUIVO_PRINCIPAL = "profissionais.json"
+ABA_PADRAO = "Respostas ao formulário 1"
 
 STATUS_VALIDOS = {"PENDENTE", "APROVADO", "REJEITADO", "INATIVO"}
+
+# Texto exato (normalizado) da opção de consentimento do formulário real.
+CONSENTIMENTO_ESPERADO = (
+    "li as informacoes sobre o uso dos meus dados pessoais e autorizo "
+    "a divulgacao publica dos dados profissionais indicados"
+)
 
 UFS = {
     "AC": "Acre", "AL": "Alagoas", "AP": "Amapá", "AM": "Amazonas", "BA": "Bahia",
@@ -51,34 +59,39 @@ UFS = {
     "TO": "Tocantins",
 }
 
-# Ordem exata dos campos no JSON público (estável para diffs e consumers).
+# Ordem exata dos campos no JSON público (allowlist — nada além disto sai).
 CAMPOS_PUBLICOS = (
     "id", "nome", "categoria", "categoriaSlug", "profissao", "descricao",
-    "uf", "municipio", "municipioSlug", "regioes", "municipiosAtendidos",
-    "remoto", "whatsapp", "atualizadoEm",
+    "uf", "estado", "municipio", "municipioSlug", "bairros",
+    "outros_municipios", "atendimento_remoto", "whatsapp", "atualizadoEm",
 )
 
-# Chaves que JAMAIS podem aparecer em um item público.
+# Chaves que JAMAIS podem aparecer em um registro público.
 CHAVES_PROIBIDAS = {
-    "email", "emailAdministrativo", "endereco", "enderecoComercial",
-    "observacoes", "status", "dataAprovacao", "consentimento", "ativo",
-    "timestamp", "dataEnvio",
+    "email", "emailAdministrativo", "email_administrativo",
+    "endereco", "enderecoComercial", "endereco_comercial",
+    "observacoes", "observacoesInternas", "observacoes_internas",
+    "status", "ativo", "consentimento", "consentimento_para_publicacao",
+    "id_publico", "timestamp", "carimbo", "data_aprovacao", "dataAprovacao",
+    "data_atualizacao", "credenciais",
 }
 
 REGEX_WHATSAPP = re.compile(r"^55[1-9][0-9]9[0-9]{8}$")
 REGEX_ID = re.compile(r"^[a-z0-9-]{4,64}$")
 REGEX_DATA = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-# Mapeamento de cabeçalhos da planilha -> chaves internas (aliases em
-# minúsculas e sem acento). Títulos recomendados no docs/GOOGLE_FORMS.md.
+# Cabeçalhos da planilha -> chaves internas. Aliases em minúsculas, sem
+# acento e com underscores tratados como espaço ("ID_PUBLICO" -> "id publico").
 COLUNAS: dict[str, tuple[str, ...]] = {
-    "timestamp": ("timestamp", "carimbo de data/hora", "data de envio", "data"),
-    "nome": ("nome publico", "nome publico do profissional ou nome comercial",
+    "timestamp": ("timestamp", "carimbo de data/hora", "carimbo de data hora",
+                  "data de envio", "data"),
+    "nome": ("nome profissional", "nome publico",
+             "nome publico do profissional ou nome comercial",
              "nome do profissional", "nome"),
     "categoria": ("categoria", "categoria de servico", "area"),
     "profissao": ("profissao", "profissao ou tipo de servico", "servico", "tipo de servico"),
     "descricao": ("descricao", "descricao do servico", "sobre o servico"),
-    "uf": ("uf", "estado", "unidade federativa"),
+    "uf": ("estado (uf)", "uf", "estado", "unidade federativa"),
     "municipio": ("municipio", "cidade"),
     "bairros": ("bairros atendidos", "bairros", "regioes atendidas", "regiao atendida"),
     "outros_municipios": ("outros municipios atendidos", "municipios atendidos",
@@ -88,18 +101,19 @@ COLUNAS: dict[str, tuple[str, ...]] = {
                  "numero de whatsapp", "zap"),
     "email": ("email administrativo", "email", "e-mail"),
     "endereco": ("endereco comercial", "endereco"),
-    "consentimento": ("consentimento", "consentimento para publicacao",
-                      "consentimento publicacao", "autorizacao", "autorizo a publicacao"),
-    "id": ("id", "identificador", "identificador unico", "id publico"),
+    "consentimento": ("consentimento para publicacao", "consentimento publicacao",
+                      "consentimento", "autorizacao", "autorizo a publicacao"),
+    "id": ("id publico", "id", "identificador", "identificador unico"),
     "status": ("status", "situacao"),
-    "data_aprovacao": ("data de aprovacao", "data aprovacao", "aprovado em"),
-    "data_atualizacao": ("ultima atualizacao", "data da ultima atualizacao", "atualizado em"),
-    "observacoes": ("observacoes", "observacoes administrativas", "notas"),
+    "data_aprovacao": ("data de aprovacao", "data aprovacao", "data_aprovacao", "aprovado em"),
+    "data_atualizacao": ("ultima atualizacao", "data da ultima atualizacao",
+                         "data_atualizacao", "atualizado em"),
+    "observacoes": ("observacoes internas", "observacoes", "notas"),
     "ativo": ("ativo", "cadastro ativo", "situacao de atividade", "atividade"),
 }
 
-COLUNAS_OBRIGATORIAS = ("nome", "categoria", "profissao", "descricao", "uf",
-                        "municipio", "whatsapp", "consentimento", "status")
+COLUNAS_OBRIGATORIAS = ("timestamp", "nome", "categoria", "profissao", "descricao",
+                        "uf", "municipio", "whatsapp", "consentimento", "status", "ativo")
 
 
 class ErroColunas(Exception):
@@ -107,18 +121,19 @@ class ErroColunas(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Normalização (espelha src/lib/* do frontend; testes cobrem ambos os lados)
+# Normalização
 # ---------------------------------------------------------------------------
 
 def normalizar_texto(valor: str) -> str:
-    """Minúsculas, sem acentos, espaços colapsados."""
+    """Minúsculas, sem acentos, underscores como espaço, espaços colapsados."""
     decomposto = unicodedata.normalize("NFD", valor)
     sem_acentos = "".join(c for c in decomposto if not unicodedata.combining(c))
-    return re.sub(r"\s+", " ", sem_acentos).lower().strip()
+    texto = sem_acentos.lower().replace("_", " ")
+    return re.sub(r"\s+", " ", texto).strip()
 
 
 def slug(valor: str) -> str:
-    """Slug seguro para URLs."""
+    """Slug seguro para URLs (idêntico ao slug do frontend)."""
     texto = normalizar_texto(valor)
     texto = re.sub(r"[^a-z0-9]+", "-", texto)
     texto = re.sub(r"-{2,}", "-", texto).strip("-")
@@ -126,32 +141,28 @@ def slug(valor: str) -> str:
 
 
 def limpar_celula(valor: Any) -> str:
-    """str -> remove caracteres de controle, colapsa espaços."""
+    """str -> remove caracteres de controle, colapsa espaços, corta extremos."""
     if valor is None:
         return ""
-    texto = str(valor)
-    texto = re.sub(r"[\x00-\x1f\x7f]+", " ", texto)
+    texto = re.sub(r"[\x00-\x1f\x7f]+", " ", str(valor))
     return re.sub(r"\s+", " ", texto).strip()
 
 
-def mascarar_telefone(numero: str) -> str:
-    return f"…{numero[-4:]}" if len(numero) >= 4 else "…"
-
-
 def normalizar_uf(valor: str) -> str | None:
+    """Aceita 'RJ', 'rj', 'RJ - Rio de Janeiro' ou 'Rio de Janeiro' -> sigla."""
     limpo = re.sub(r"[^a-z ]", " ", normalizar_texto(valor)).strip()
     if not limpo:
         return None
-    if limpo.upper() in UFS:
-        return limpo.upper()
-    for sigla, nome in UFS.items():
-        if normalizar_texto(nome) == limpo:
-            return sigla
-    return None
+    partes = limpo.split()
+    siglas_minusculas = {sigla.lower() for sigla in UFS}
+    if partes[0] in siglas_minusculas:
+        return partes[0].upper()  # "rj - rio de janeiro" ou "rj"
+    nomes = {normalizar_texto(nome): sigla for sigla, nome in UFS.items()}
+    return nomes.get(limpo)
 
 
 def normalizar_whatsapp(valor: str) -> str | None:
-    """Valida e converte para 55DDD9XXXXXXXX. Fixos e números incompletos -> None."""
+    """Valida celular brasileiro e converte para 55DDD9XXXXXXXX."""
     digitos = re.sub(r"\D", "", valor or "")
     if not digitos:
         return None
@@ -174,15 +185,24 @@ def afirmativo(valor: str) -> bool:
     texto = normalizar_texto(valor)
     return bool(
         texto.startswith("sim")
-        or texto in {"true", "x", "ok", "autorizo", "aceito", "concordo", "sim,"}
+        or texto in {"true", "x", "ok", "autorizo", "aceito", "concordo"}
         or texto.startswith("autorizo")
         or texto.startswith("aceito")
     )
 
 
-def negativo(valor: str) -> bool:
-    texto = normalizar_texto(valor)
-    return texto.startswith("nao") or texto in {"false", "0", "n", "inativo"}
+def consentimento_valido(valor: str) -> bool:
+    """Somente a frase exata do formulário (ou forma curta inequívoca).
+
+    Textos arbitrários NÃO são interpretados como autorização.
+    """
+    texto = normalizar_texto(valor).rstrip(".")
+    if not texto:
+        return False
+    if texto == CONSENTIMENTO_ESPERADO.rstrip("."):
+        return True
+    # Compatibilidade com o modelo antigo de formulário ("Sim, autorizo…").
+    return texto.startswith("sim, autorizo") or texto.startswith("autorizo a publicacao")
 
 
 def parse_data(valor: str) -> date | None:
@@ -199,17 +219,26 @@ def parse_data(valor: str) -> date | None:
 
 
 def dividir_lista(valor: str, maximo_itens: int = 15) -> list[str]:
-    """Divide campos de lista por ';' ou ',' ou quebra de linha já normalizada."""
     texto = limpar_celula(valor)
     if not texto:
         return []
-    partes = re.split(r"[;,]", texto)
     itens: list[str] = []
-    for parte in partes:
+    for parte in re.split(r"[;,]", texto):
         item = parte.strip()[:120]
         if item and item.lower() not in {i.lower() for i in itens}:
             itens.append(item)
     return itens[:maximo_itens]
+
+
+def gerar_id_publico(
+    dados: dict[str, str], whatsapp: str, segredo: str
+) -> str:
+    """ID estável: coluna ID_PUBLICO (se válida) ou HMAC-SHA256 do carimbo+whatsapp."""
+    id_manual = slug(dados.get("id", ""))
+    if REGEX_ID.match(id_manual):
+        return id_manual
+    identidade = f"{dados.get('timestamp', '')}|{whatsapp}"
+    return hmac.new(segredo.encode("utf-8"), identidade.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +246,7 @@ def dividir_lista(valor: str, maximo_itens: int = 15) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def mapa_colunas(cabecalho: list[str]) -> dict[str, int]:
-    """Normaliza o cabeçalho e valida colunas obrigatórias."""
+    """Normaliza o cabeçalho (espaços extras inclusos) e valida obrigatórias."""
     mapa: dict[str, int] = {}
     for indice, titulo in enumerate(cabecalho):
         chave = normalizar_texto(limpar_celula(titulo))
@@ -237,17 +266,16 @@ def mapa_colunas(cabecalho: list[str]) -> dict[str, int]:
         raise ErroColunas(
             "Cabeçalhos obrigatórios ausentes na planilha: "
             + ", ".join(sorted(faltando))
-            + ". Consulte docs/GOOGLE_FORMS.md para a estrutura esperada."
+            + ". Verifique a aba e os títulos (docs/GOOGLE_SHEETS_E_GOOGLE_CLOUD.md)."
         )
     return mapa
 
 
 def linha_para_dicionario(linha: list[str], mapa: dict[str, int]) -> dict[str, str]:
-    dados: dict[str, str] = {}
-    for chave, indice in mapa.items():
-        valor = linha[indice] if indice < len(linha) else ""
-        dados[chave] = limpar_celula(valor)
-    return dados
+    return {
+        chave: limpar_celula(linha[indice] if indice < len(linha) else "")
+        for chave, indice in mapa.items()
+    }
 
 
 def buscar_linhas_google(planilha_id: str, aba: str, credenciais_json: str) -> list[list[str]]:
@@ -263,8 +291,7 @@ def buscar_linhas_google(planilha_id: str, aba: str, credenciais_json: str) -> l
 
     info = json.loads(credenciais_json)
     credenciais = service_account.Credentials.from_service_account_info(
-        info,
-        scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"],
+        info, scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
     )
     servico = build("sheets", "v4", credentials=credenciais, cache_discovery=False)
     resultado = (
@@ -285,57 +312,43 @@ def ler_csv(caminho: str) -> list[list[str]]:
 # Processamento dos registros
 # ---------------------------------------------------------------------------
 
-def gerar_id(dados: dict[str, str], whatsapp: str) -> str:
-    """ID público estável: coluna ID (se a moderação fixar) ou hash curto."""
-    id_manual = slug(dados.get("id", ""))
-    if REGEX_ID.match(id_manual):
-        return id_manual
-    base = f"{dados.get('timestamp', '')}|{dados.get('nome', '')}|{whatsapp}"
-    return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
-
-
 def processar_linha(
-    dados: dict[str, str], numero_linha: int, avisos: list[str]
+    dados: dict[str, str], numero_linha: int, avisos: list[str], segredo: str
 ) -> dict[str, Any] | None:
-    """Converte uma linha em registro público, aplicando todas as regras.
-
-    Retorna None (com aviso) quando o registro não pode ser publicado.
-    Nunca registra conteúdo sensível nos avisos — apenas linha e motivo.
-    """
+    """Converte uma linha em registro público (allowlist) ou None + aviso."""
     def avisar(motivo: str) -> None:
         avisos.append(f"linha {numero_linha}: {motivo}")
 
-    # Linha totalmente vazia: ignora em silêncio.
     if not any(dados.values()):
-        return None
+        return None  # linha vazia: ignora em silêncio
 
     status = dados.get("status", "").strip().upper()
     if not status:
         status = "PENDENTE"
-        avisar("sem status — tratado como PENDENTE")
+        avisar("STATUS vazio — tratado como PENDENTE")
     elif status not in STATUS_VALIDOS:
-        avisar(f"status desconhecido '{status}' — tratado como PENDENTE")
+        avisar(f"STATUS desconhecido — tratado como PENDENTE")
         status = "PENDENTE"
 
     if status != "APROVADO":
-        return None  # pendentes/rejeitados/inativos simplesmente não publicam
+        return None
 
-    if not afirmativo(dados.get("consentimento", "")):
+    if not consentimento_valido(dados.get("consentimento", "")):
         avisar("APROVADO sem consentimento válido — não publicado")
         return None
 
-    if negativo(dados.get("ativo", "")):
-        avisar("cadastro marcado como inativo — não publicado")
+    if not afirmativo(dados.get("ativo", "")):
+        avisar("ATIVO não é SIM — não publicado (campo vazio não aprova)")
         return None
 
     uf = normalizar_uf(dados.get("uf", ""))
     if uf is None:
-        avisar("UF inválida ou vazia — não publicado")
+        avisar("Estado/UF inválido — não publicado")
         return None
 
     municipio = dados.get("municipio", "")[:120]
     if not municipio:
-        avisar("município vazio — não publicado")
+        avisar("Município vazio — não publicado")
         return None
 
     whatsapp = normalizar_whatsapp(dados.get("whatsapp", ""))
@@ -360,32 +373,43 @@ def processar_linha(
         avisar("sem data utilizável (envio/aprovação/atualização) — não publicado")
         return None
 
-    registro = {
-        "id": gerar_id(dados, whatsapp),
+    categoria_slug = slug(categoria)
+    municipio_slug = slug(municipio)
+    if not categoria_slug or not municipio_slug:
+        avisar("categoria ou município sem texto utilizável — não publicado")
+        return None
+
+    return {
+        "id": gerar_id_publico(dados, whatsapp, segredo),
         "nome": nome,
         "categoria": categoria,
-        "categoriaSlug": slug(categoria),
+        "categoriaSlug": categoria_slug,
         "profissao": profissao,
         "descricao": descricao,
         "uf": uf,
+        "estado": UFS[uf],
         "municipio": municipio,
-        "municipioSlug": slug(municipio),
-        "regioes": dividir_lista(dados.get("bairros", "")),
-        "municipiosAtendidos": dividir_lista(dados.get("outros_municipios", "")),
-        "remoto": afirmativo(dados.get("remoto", "")),
+        "municipioSlug": municipio_slug,
+        "bairros": dividir_lista(dados.get("bairros", "")),
+        "outros_municipios": dividir_lista(dados.get("outros_municipios", "")),
+        "atendimento_remoto": afirmativo(dados.get("remoto", "")),
         "whatsapp": whatsapp,
         "atualizadoEm": data_referencia.isoformat(),
     }
-    if not registro["categoriaSlug"] or not registro["municipioSlug"]:
-        avisar("categoria ou município sem texto utilizável — não publicado")
-        return None
-    return registro
+
+
+def _prioridade(dados: dict[str, str], indice: int) -> tuple:
+    return (
+        parse_data(dados.get("data_aprovacao", "")) or date.min,
+        parse_data(dados.get("timestamp", "")) or date.min,
+        indice,
+    )
 
 
 def montar_catalogo(
-    linhas: list[list[str]], mapa: dict[str, int]
+    linhas: list[list[str]], mapa: dict[str, int], segredo: str
 ) -> tuple[dict[str, Any], dict[str, int], list[str]]:
-    """Constrói o catálogo completo a partir das linhas da planilha."""
+    """Constrói o catálogo: allowlist, dedupe por id e por (telefone, profissão, município)."""
     avisos: list[str] = []
     contagem = {
         "linhas": 0, "publicados": 0, "pendentes": 0, "rejeitados": 0,
@@ -405,7 +429,7 @@ def montar_catalogo(
         if status_bruto not in STATUS_VALIDOS:
             status_bruto = "PENDENTE"
 
-        registro = processar_linha(dados, numero_linha, avisos)
+        registro = processar_linha(dados, numero_linha, avisos, segredo)
         if registro is None:
             if status_bruto == "PENDENTE":
                 contagem["pendentes"] += 1
@@ -413,28 +437,44 @@ def montar_catalogo(
                 contagem["rejeitados"] += 1
             elif status_bruto == "INATIVO":
                 contagem["inativos"] += 1
-            elif not afirmativo(dados.get("consentimento", "")):
+            elif not consentimento_valido(dados.get("consentimento", "")):
                 contagem["sem_consentimento"] += 1
-            elif negativo(dados.get("ativo", "")):
+            elif not afirmativo(dados.get("ativo", "")):
                 contagem["inativos"] += 1
             else:
                 contagem["invalidos"] += 1
             continue
 
-        prioridade = (
-            parse_data(dados.get("data_aprovacao", "")) or date.min,
-            parse_data(dados.get("timestamp", "")) or date.min,
-            indice,
-        )
+        prioridade = _prioridade(dados, indice)
         if registro["id"] in por_id:
             contagem["duplicados"] += 1
-            avisos.append(f"linha {numero_linha}: id duplicado — mantida a versão mais recente")
+            avisos.append(f"linha {numero_linha}: ID duplicado — mantida a versão mais recente")
             if prioridade >= por_id[registro["id"]][1]:
                 por_id[registro["id"]] = (registro, prioridade)
         else:
             por_id[registro["id"]] = (registro, prioridade)
 
-    profissionais = [valor[0] for valor in por_id.values()]
+    # Deduplicação por combinação (whatsapp + profissão + município):
+    # cadastros repetidos acidentais publicam apenas a versão mais recente.
+    por_combinacao: dict[tuple, tuple[dict[str, Any], tuple]] = {}
+    for registro, prioridade in por_id.values():
+        chave = (
+            registro["whatsapp"],
+            normalizar_texto(registro["profissao"]),
+            registro["municipioSlug"],
+        )
+        if chave in por_combinacao:
+            contagem["duplicados"] += 1
+            avisos.append(
+                "duplicado: mesmo WhatsApp+profissão+município — "
+                "mantida a versão mais recente"
+            )
+            if prioridade >= por_combinacao[chave][1]:
+                por_combinacao[chave] = (registro, prioridade)
+        else:
+            por_combinacao[chave] = (registro, prioridade)
+
+    profissionais = [valor[0] for valor in por_combinacao.values()]
     profissionais.sort(key=lambda r: (normalizar_texto(r["nome"]), r["municipioSlug"], r["id"]))
     contagem["publicados"] = len(profissionais)
 
@@ -453,7 +493,7 @@ def montar_catalogo(
 # ---------------------------------------------------------------------------
 
 def validar_catalogo(dados: Any) -> tuple[bool, list[str]]:
-    """Validação estrutural completa do JSON público. Espelha src/lib/catalogo-parse.ts."""
+    """Validação estrutural do JSON público (espelha src/lib/catalogo-parse.ts)."""
     erros: list[str] = []
     if not isinstance(dados, dict):
         return False, ["o catálogo deve ser um objeto JSON"]
@@ -473,6 +513,7 @@ def validar_catalogo(dados: Any) -> tuple[bool, list[str]]:
         return False, erros
 
     ids: set[str] = set()
+    combinacoes: set[tuple] = set()
     for indice, item in enumerate(profissionais):
         prefixo = f"profissionais[{indice}]"
         if not isinstance(item, dict):
@@ -491,21 +532,24 @@ def validar_catalogo(dados: Any) -> tuple[bool, list[str]]:
             erros.append(f"{prefixo}: 'id' duplicado ({identificador})")
         else:
             ids.add(identificador)
-        if item.get("uf") not in UFS:
+        uf = item.get("uf")
+        if uf not in UFS:
             erros.append(f"{prefixo}: UF inválida")
+        elif item.get("estado") != UFS[uf]:
+            erros.append(f"{prefixo}: 'estado' não corresponde à UF")
         whatsapp = item.get("whatsapp", "")
         if not isinstance(whatsapp, str) or not REGEX_WHATSAPP.match(whatsapp):
             erros.append(f"{prefixo}: 'whatsapp' fora do formato 55DDD9XXXXXXXX")
         atualizado = item.get("atualizadoEm", "")
         if not isinstance(atualizado, str) or not REGEX_DATA.match(atualizado):
             erros.append(f"{prefixo}: 'atualizadoEm' fora do formato AAAA-MM-DD")
-        for campo_lista in ("regioes", "municipiosAtendidos"):
+        for campo_lista in ("bairros", "outros_municipios"):
             valor = item.get(campo_lista)
             if not isinstance(valor, list) or any(not isinstance(i, str) for i in valor):
                 erros.append(f"{prefixo}: '{campo_lista}' deve ser lista de textos")
-        if not isinstance(item.get("remoto", False), bool):
-            erros.append(f"{prefixo}: 'remoto' deve ser booleano")
-        for campo_texto, maximo in (("nome", 160), ("categoria", 120),
+        if not isinstance(item.get("atendimento_remoto", False), bool):
+            erros.append(f"{prefixo}: 'atendimento_remoto' deve ser booleano")
+        for campo_texto, maximo in (("nome", 160), ("categoria", 120), ("estado", 120),
                                     ("profissao", 120), ("descricao", 2000),
                                     ("municipio", 120)):
             valor = item.get(campo_texto, "")
@@ -513,6 +557,15 @@ def validar_catalogo(dados: Any) -> tuple[bool, list[str]]:
                 erros.append(f"{prefixo}: '{campo_texto}' vazio")
             elif len(valor) > maximo:
                 erros.append(f"{prefixo}: '{campo_texto}' excede {maximo} caracteres")
+        for campo_slug in ("categoriaSlug", "municipioSlug"):
+            valor = item.get(campo_slug, "")
+            if not isinstance(valor, str) or not re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", valor):
+                erros.append(f"{prefixo}: '{campo_slug}' inválido")
+        combinacao = (whatsapp, normalizar_texto(str(item.get("profissao", ""))),
+                      str(item.get("municipioSlug", "")))
+        if combinacao in combinacoes:
+            erros.append(f"{prefixo}: duplicado (WhatsApp+profissão+município)")
+        combinacoes.add(combinacao)
 
     total = dados.get("total")
     if total is not None and total != len(profissionais):
@@ -537,26 +590,25 @@ def _sem_gerado_em(dados: dict[str, Any]) -> dict[str, Any]:
 
 
 def salvar_catalogo(diretorio: Path, catalogo: dict[str, Any]) -> bool:
-    """Grava catálogo e blocos por UF. Retorna True apenas se houve mudança real."""
-    caminho_principal = diretorio / "catalogo.json"
+    """Grava catálogo e blocos por UF. True apenas se houve mudança real."""
+    caminho_principal = diretorio / ARQUIVO_PRINCIPAL
 
     atual: dict[str, Any] | None = None
     if caminho_principal.exists():
         try:
             atual = json.loads(caminho_principal.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            atual = None  # catálogo atual corrompido: o novo válido o substitui
+            atual = None
 
     if atual is not None and _sem_gerado_em(atual) == _sem_gerado_em(catalogo):
-        return False  # nada mudou: preserva geradoEm e evita commit vazio
+        return False  # nada mudou: preserva geradoEm, evita commit vazio
 
     catalogo["geradoEm"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     valido, erros = validar_catalogo(catalogo)
     if not valido:
         raise ValueError("catálogo gerado não passou na validação: " + "; ".join(erros[:10]))
 
-    conteudo = json.dumps(catalogo, ensure_ascii=False, indent=2) + "\n"
-    escrever_atomico(caminho_principal, conteudo)
+    escrever_atomico(caminho_principal, json.dumps(catalogo, ensure_ascii=False, indent=2) + "\n")
 
     # Blocos por UF (otimização de carregamento da busca).
     diretorio_uf = diretorio / "uf"
@@ -576,11 +628,14 @@ def salvar_catalogo(diretorio: Path, catalogo: dict[str, Any]) -> bool:
         nome = f"{uf.lower()}.json"
         desejados.add(nome)
         escrever_atomico(diretorio_uf / nome, json.dumps(bloco, ensure_ascii=False, indent=2) + "\n")
-
-    # Remove arquivos de UF que não possuem mais profissionais.
     for existente in diretorio_uf.glob("*.json"):
         if existente.name not in desejados:
             existente.unlink()
+
+    # Migração: remove o arquivo antigo (catalogo.json) se ainda existir.
+    legado = diretorio / "catalogo.json"
+    if legado.exists():
+        legado.unlink()
 
     return True
 
@@ -593,16 +648,37 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Sincroniza a planilha privada do Google Sheets com o catálogo público."
     )
-    parser.add_argument("--saida", default="public/data", help="diretório de saída (padrão: public/data)")
+    parser.add_argument("--saida", default="public/data", help="diretório de saída")
     parser.add_argument("--csv", help="lê de um CSV local em vez do Google Sheets (testes)")
     parser.add_argument("--planilha-id", default=os.environ.get("GOOGLE_SHEET_ID", ""))
-    parser.add_argument("--aba", default=os.environ.get("GOOGLE_SHEET_TAB_NAME", "Respostas de formulário 1"))
+    parser.add_argument("--aba", default=os.environ.get("GOOGLE_SHEET_TAB_NAME", ABA_PADRAO))
     parser.add_argument("--credenciais-arquivo", help="caminho do JSON da conta de serviço")
-    parser.add_argument("--dry-run", action="store_true", help="valida e mostra resumo sem escrever")
+    parser.add_argument("--id-secret", default=os.environ.get("PUBLIC_ID_SECRET", ""),
+                        help="segredo do HMAC dos IDs públicos (env PUBLIC_ID_SECRET)")
+    parser.add_argument("--publicar", action="store_true",
+                        help="grava o catálogo (sem esta flag, o modo Google apenas simula)")
+    parser.add_argument("--dry-run", action="store_true", help="nunca grava; apenas relata")
     parser.add_argument("--verbose", action="store_true", help="exibe todos os avisos")
     args = parser.parse_args(argv)
 
-    if args.csv:
+    modo_csv = bool(args.csv)
+    gravar = not args.dry_run and (args.publicar or modo_csv)
+
+    # Segredo dos IDs: obrigatório para gravar; em simulação usa valor marcado.
+    segredo = args.id_secret.strip()
+    segredo_simulado = False
+    if not segredo:
+        if gravar:
+            print(
+                "FALHA: PUBLIC_ID_SECRET não configurado (GitHub Secret ou --id-secret). "
+                "Gere com: openssl rand -hex 32. O catálogo atual foi preservado.",
+                file=sys.stderr,
+            )
+            return 1
+        segredo = "simulacao-sem-segredo"
+        segredo_simulado = True
+
+    if modo_csv:
         try:
             linhas = ler_csv(args.csv)
         except OSError as erro:
@@ -627,8 +703,8 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"FALHA: não foi possível consultar o Google Sheets "
                 f"({type(erro).__name__}). Verifique credenciais, ID da planilha, "
-                "aba e o compartilhamento com a conta de serviço. O catálogo "
-                "atual foi preservado.",
+                f"aba '{args.aba}' e o compartilhamento com a conta de serviço. "
+                "O catálogo atual foi preservado.",
                 file=sys.stderr,
             )
             return 1
@@ -643,9 +719,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FALHA de estrutura: {erro}", file=sys.stderr)
         return 1
 
-    catalogo, contagem, avisos = montar_catalogo(linhas[1:], mapa)
+    catalogo, contagem, avisos = montar_catalogo(linhas[1:], mapa, segredo)
 
-    # Pré-validação antes de qualquer escrita.
     catalogo_teste = dict(catalogo)
     catalogo_teste["geradoEm"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     valido, erros = validar_catalogo(catalogo_teste)
@@ -655,10 +730,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {erro}", file=sys.stderr)
         return 1
 
-    if args.dry_run:
-        print(f"DRY-RAN. Resumo: {json.dumps(contagem, ensure_ascii=False)}")
-        for aviso in avisos[:50]:
-            print(f"  aviso: {aviso}")
+    print("Resumo da sincronização (modo " + ("GRAVAÇÃO" if gravar else "SIMULAÇÃO") + "):")
+    print(
+        f"  linhas lidas: {contagem['linhas']} | elegíveis: {contagem['publicados']} | "
+        f"pendentes: {contagem['pendentes']} | rejeitados: {contagem['rejeitados']} | "
+        f"inativos: {contagem['inativos']} | sem consentimento: {contagem['sem_consentimento']} | "
+        f"inválidos: {contagem['invalidos']} | duplicados: {contagem['duplicados']}"
+    )
+    if segredo_simulado:
+        print("  AVISO: PUBLIC_ID_SECRET ausente — IDs exibidos são de simulação.")
+    if not gravar:
+        print("  Nada foi gravado (use --publicar ou configure HABILITAR_PUBLICACAO=SIM).")
+
+    limite_avisos = len(avisos) if args.verbose else min(len(avisos), 20)
+    for aviso in avisos[:limite_avisos]:
+        print(f"  aviso: {aviso}")
+    if not args.verbose and len(avisos) > limite_avisos:
+        print(f"  … e mais {len(avisos) - limite_avisos} avisos (use --verbose para todos).")
+
+    if not gravar:
         return 0
 
     try:
@@ -667,23 +757,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FALHA ao gravar os arquivos: {erro}", file=sys.stderr)
         return 1
 
-    print(
-        f"Sincronização concluída. Linhas: {contagem['linhas']} | "
-        f"publicados: {contagem['publicados']} | pendentes: {contagem['pendentes']} | "
-        f"rejeitados: {contagem['rejeitados']} | inativos: {contagem['inativos']} | "
-        f"sem consentimento: {contagem['sem_consentimento']} | inválidos: {contagem['invalidos']} | "
-        f"duplicados: {contagem['duplicados']}."
-    )
     if mudou:
-        print("Catálogo atualizado com novas informações.")
+        print(f"Catálogo atualizado em {args.saida}/{ARQUIVO_PRINCIPAL}.")
     else:
         print("Sem alterações reais — arquivos preservados (nenhum commit necessário).")
-
-    limite_avisos = len(avisos) if args.verbose else min(len(avisos), 20)
-    for aviso in avisos[:limite_avisos]:
-        print(f"  aviso: {aviso}")
-    if not args.verbose and len(avisos) > limite_avisos:
-        print(f"  … e mais {len(avisos) - limite_avisos} avisos (use --verbose para todos).")
     return 0
 
 

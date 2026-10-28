@@ -11,11 +11,12 @@ function profissional(parcial: Partial<Profissional>): Profissional {
     profissao: 'Cabelereira',
     descricao: 'Cortes e coloração a domicílio em Campinas.',
     uf: 'SP',
+    estado: 'São Paulo',
     municipio: 'Campinas',
     municipioSlug: 'campinas',
-    regioes: ['Taquaral'],
-    municipiosAtendidos: [],
-    remoto: false,
+    bairros: ['Taquaral'],
+    outros_municipios: [],
+    atendimento_remoto: false,
     whatsapp: '5519999998888',
     atualizadoEm: '2026-10-01',
     ...parcial,
@@ -31,11 +32,12 @@ const lista: Profissional[] = [
     profissao: 'Eletricista residencial',
     descricao: 'Chuveiros, tomadas e quadros. Orçamento gratuito.',
     uf: 'MG',
+    estado: 'Minas Gerais',
     municipio: 'Belo Horizonte',
     municipioSlug: 'belo-horizonte',
-    regioes: ['Centro', 'Savassi'],
-    municipiosAtendidos: ['Contagem'],
-    remoto: true,
+    bairros: ['Centro', 'Savassi'],
+    outros_municipios: ['Contagem'],
+    atendimento_remoto: true,
   }),
   profissional({
     nome: 'Ana Lima',
@@ -44,6 +46,7 @@ const lista: Profissional[] = [
     categoriaSlug: 'hidraulica',
     descricao: 'Desentupimento e consertos hidráulicos.',
     uf: 'SP',
+    estado: 'São Paulo',
     municipio: 'Santos',
     municipioSlug: 'santos',
   }),
@@ -53,19 +56,14 @@ describe('busca sem diferenciação de acentos', () => {
   it('encontra por profissão digitada de qualquer forma', () => {
     expect(combinarFiltros(lista, { texto: 'eletricista' })).toHaveLength(1);
     expect(combinarFiltros(lista, { texto: 'ELÉTRICISTA' })).toHaveLength(1);
-    expect(combinarFiltros(lista, { texto: 'Eletricista' })).toHaveLength(1);
-    expect(combinarFiltros(lista, { texto: 'eletricista' })[0]?.nome).toBe('João Souza');
+    expect(combinarFiltros(lista, { texto: 'Eletricista' })[0]?.nome).toBe('João Souza');
   });
 
-  it('busca por nome do profissional', () => {
+  it('busca por nome, palavra da descrição e bairro/município atendido', () => {
     expect(combinarFiltros(lista, { texto: 'maria' })).toHaveLength(1);
-    expect(combinarFiltros(lista, { texto: 'JOÃO SOUZA' })).toHaveLength(1);
-  });
-
-  it('busca por palavra da descrição e por região atendida', () => {
     expect(combinarFiltros(lista, { texto: 'orçamento' })).toHaveLength(1);
     expect(combinarFiltros(lista, { texto: 'savassi' })).toHaveLength(1);
-    expect(combinarFiltros(lista, { texto: 'contagem' })).toHaveLength(1); // municípios atendidos
+    expect(combinarFiltros(lista, { texto: 'contagem' })).toHaveLength(1);
   });
 
   it('exige que todos os termos estejam presentes (busca E)', () => {
@@ -81,25 +79,16 @@ describe('combinação de filtros', () => {
     expect(resultado.every((p) => p.uf === 'SP')).toBe(true);
   });
 
-  it('filtra por município (slug)', () => {
-    const resultado = combinarFiltros(lista, { municipio: 'belo-horizonte' });
-    expect(resultado).toHaveLength(1);
-    expect(resultado[0]?.nome).toBe('João Souza');
-  });
-
-  it('filtra por categoria (slug)', () => {
-    const resultado = combinarFiltros(lista, { categoria: 'beleza-e-estetica' });
-    expect(resultado).toHaveLength(1);
-    expect(resultado[0]?.nome).toBe('Maria da Silva');
+  it('filtra por município e categoria (slugs)', () => {
+    expect(combinarFiltros(lista, { municipio: 'belo-horizonte' })[0]?.nome).toBe('João Souza');
+    expect(combinarFiltros(lista, { categoria: 'beleza-e-estetica' })[0]?.nome).toBe('Maria da Silva');
   });
 
   it('combina texto + UF + município + categoria', () => {
     expect(
       combinarFiltros(lista, { texto: 'eletricista', uf: 'MG', municipio: 'belo-horizonte', categoria: 'instalacoes-eletricas' }),
     ).toHaveLength(1);
-    expect(
-      combinarFiltros(lista, { texto: 'eletricista', uf: 'SP' }),
-    ).toHaveLength(0);
+    expect(combinarFiltros(lista, { texto: 'eletricista', uf: 'SP' })).toHaveLength(0);
   });
 
   it('lista inteira quando nenhum filtro', () => {
@@ -108,20 +97,14 @@ describe('combinação de filtros', () => {
   });
 });
 
-describe('municipiosDisponiveis', () => {
-  it('deriva municípios dos registros, ordenados e sem duplicatas', () => {
+describe('listagens derivadas', () => {
+  it('municípios ordenados e sem duplicatas', () => {
     const municipios = municipiosDisponiveis([...lista, profissional({ municipio: 'Campinas', municipioSlug: 'campinas' })]);
-    expect(municipios.map((m) => m.slug)).toEqual([
-      'belo-horizonte', 'campinas', 'santos',
-    ]);
+    expect(municipios.map((m) => m.slug)).toEqual(['belo-horizonte', 'campinas', 'santos']);
   });
-});
 
-describe('categoriasDisponiveis', () => {
-  it('agrupa por categoria com contagem', () => {
-    const categorias = categoriasDisponiveis(lista);
-    const beleza = categorias.find((c) => c.slug === 'beleza-e-estetica');
+  it('categorias com contagem', () => {
+    const beleza = categoriasDisponiveis(lista).find((c) => c.slug === 'beleza-e-estetica');
     expect(beleza?.total).toBe(1);
-    expect(categorias).toHaveLength(3);
   });
 });

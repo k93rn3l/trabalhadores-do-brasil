@@ -44,4 +44,4 @@ jobs:
         run: pytest scripts/tests -q
 
       - name: Validar catálogo público
-        run: python scripts/validar_catalogo.py public/data/catalogo.json
+        run: python scripts/validar_catalogo.py public/data/profissionais.json

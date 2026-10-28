@@ -12,11 +12,8 @@ describe('escapeHTML', () => {
 });
 
 describe('truncar', () => {
-  it('mantém textos curtos intactos', () => {
+  it('mantém textos curtos intactos e corta em palavra inteira', () => {
     expect(truncar('texto curto', 50)).toBe('texto curto');
-  });
-
-  it('corta em palavra inteira com reticências', () => {
     const longo = ' palavra'.repeat(40).trim();
     const cortado = truncar(longo, 100);
     expect(cortado.endsWith('…')).toBe(true);
@@ -46,6 +43,6 @@ describe('cartaoHTML', () => {
 
   it('indica atendimento online quando remoto', () => {
     expect(cartaoHTML(profissionalExemplo, '')).not.toContain('Atende online');
-    expect(cartaoHTML({ ...profissionalExemplo, remoto: true }, '')).toContain('Atende online');
+    expect(cartaoHTML({ ...profissionalExemplo, atendimento_remoto: true }, '')).toContain('Atende online');
   });
 });

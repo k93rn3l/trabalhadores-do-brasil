@@ -1,18 +1,22 @@
-# Profissionais Progressistas
+# Rede Autônoma
 
 Plataforma nacional, **gratuita, estática e sem servidor próprio**, para divulgação de
 serviços prestados por profissionais autônomos em todo o Brasil. Visitantes encontram
 prestadores por profissão, categoria, estado, município e região atendida — e entram em
 contato diretamente pelo **WhatsApp**.
 
-> O nome da plataforma (**Profissionais Progressistas**) está centralizado em
+> O nome da plataforma (**Rede Autônoma**) está centralizado em
 > `src/config/site.ts`. Trocar o nome exige alterar um único campo.
 
-**Fluxo completo:** profissional preenche um **Google Forms** → respostas caem numa
-planilha privada do **Google Sheets** → a moderação aprova → um workflow do
-**GitHub Actions** sincroniza a planilha a cada hora → apenas cadastros aprovados,
-ativos e com consentimento são exportados para o **JSON público** → o **Cloudflare
-Pages** publica o site atualizado automaticamente.
+**Fluxo completo:** profissional preenche o **Google Forms** → respostas caem na
+planilha privada do **Google Sheets** → a moderação aprova → o workflow
+**Sincronizar profissionais** do **GitHub Actions** roda a cada hora → apenas
+cadastros APROVADOS, com ATIVO=SIM e consentimento válido são exportados para o
+JSON público → o **Cloudflare Pages** publica o site atualizado automaticamente.
+
+**Integração real já configurada no código:** formulário
+`https://forms.gle/uKqyYZkaTpGTpepb7`, planilha
+`1nxcIvRTlAf1HTXbNaeq6oo3gOJN8L52hbcL6NGzTk3M`, aba “Respostas ao formulário 1”.
 
 ---
 
@@ -21,7 +25,8 @@ Pages** publica o site atualizado automaticamente.
 - Site estático gerado com **Astro (SSG) + TypeScript**, HTML, CSS e JavaScript puros.
 - Cadastro via **Google Forms**; dados privados em **Google Sheets** (nunca públicos).
 - Sincronização horária por **GitHub Actions** com conta de serviço do Google Cloud.
-- Catálogo público em **JSON** versionado no repositório (`public/data/`).
+- Catálogo público em **JSON** versionado no repositório (`public/data/profissionais.json`
+  + blocos por UF em `public/data/uf/`), gerado por **allowlist** de campos.
 - Sem autenticação de usuários, sem backend em execução, sem serviços pagos.
 - Busca com **27 UFs**, filtros combináveis, sem diferenciação de acentos e
   carregamento otimizado por estado (blocos `/data/uf/UF.json`).
@@ -37,7 +42,7 @@ Google Forms ──► Google Sheets (privada)
                       │  ② scripts/sync_catalogo.py (conta de serviço)
                       │  ③ filtra APROVADO + ativo + consentimento
                       ▼
-              public/data/catalogo.json (+ data/uf/*.json)
+              public/data/profissionais.json (+ data/uf/*.json)
                       │  ④ commit (somente se houver mudança real)
                       ▼
               Cloudflare Pages ──► build Astro (SSG) ──► site publicado
@@ -108,11 +113,11 @@ Até a URL ser configurada, a página `/cadastrar/` exibe um aviso de
 
 ## 7. Como configurar a planilha Google Sheets
 
-Guia completo em **[docs/GOOGLE_SHEETS_E_GOOGLE_CLOUD.md](docs/GOOGLE_SHEETS_E_GOOGLE_CLOUD.md)**.
-Resumo: o Forms cria a planilha com as colunas de respostas; a moderação adiciona as
-**colunas administrativas** (Status, Data de aprovação, Última atualização,
-Observações, Ativo, ID). O modelo com todos os cabeçalhos está em
-`scripts/modelo_planilha.csv`. A planilha deve permanecer **privada**.
+A planilha real já existe (aba “Respostas ao formulário 1”). As colunas
+administrativas — STATUS, ATIVO, ID_PUBLICO, DATA_APROVACAO, DATA_ATUALIZACAO,
+OBSERVACOES_INTERNAS — já fazem parte dela. A estrutura completa, coluna por
+coluna, está em **[docs/GOOGLE_SHEETS_E_GOOGLE_CLOUD.md](docs/GOOGLE_SHEETS_E_GOOGLE_CLOUD.md)**;
+o modelo em CSV é `scripts/modelo_planilha.csv`. A planilha permanece **privada**.
 
 ## 8. Como criar a conta de serviço no Google Cloud
 
@@ -128,57 +133,68 @@ guia do item 8.
 
 ## 10. Como configurar os GitHub Secrets
 
-Em **Settings → Secrets and variables → Actions**:
+Em **Settings → Secrets and variables → Actions** (detalhes em
+[docs/GOOGLE_SHEETS_E_GOOGLE_CLOUD.md](docs/GOOGLE_SHEETS_E_GOOGLE_CLOUD.md)):
 
-| Nome | Onde |
-|---|---|
-| `GOOGLE_SHEET_ID` | Secret — ID da planilha (presente na URL dela) |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | Secret — conteúdo completo do JSON da chave |
-| `GOOGLE_SHEET_TAB_NAME` | Variável (opcional) — nome da aba; padrão “Respostas de formulário 1” |
+| Nome | Tipo | Uso |
+|---|---|---|
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Secret | JSON completo da conta de serviço |
+| `PUBLIC_ID_SECRET` | Secret | `openssl rand -hex 32` — gera os IDs públicos (HMAC). Guarde para sempre |
+| `CLOUDFLARE_DEPLOY_HOOK_URL` | Secret | (opcional) Deploy Hook do Cloudflare Pages |
+| `GOOGLE_SHEET_ID` | Secret/Var | opcional — o workflow já tem o ID real como padrão |
+| `GOOGLE_SHEET_TAB_NAME` | Variable | opcional — padrão “Respostas ao formulário 1” |
+| `HABILITAR_PUBLICACAO` | Variable | **`SIM`** libera a gravação; qualquer outro valor = simulação |
 
 Nenhum segredo vai para o código ou para o frontend.
 
 ## 11. Como funciona a aprovação de cadastros
 
 - Todo cadastro novo entra com status **PENDENTE**;
-- A moderação escreve `APROVADO`, `REJEITADO` ou `INATIVO` na coluna **Status**;
-- **Regra obrigatória (fail-closed):** só é publicado o que for `APROVADO`
-  **e** não estiver marcado como inativo **e** tiver consentimento válido;
-- Status vazio/desconhecido é tratado como PENDENTE (nunca publicado);
+- A moderação escreve `APROVADO`, `REJEITADO` ou `INATIVO` na coluna **STATUS**;
+- **Regra obrigatória (fail-closed):** só é publicado o que for `STATUS=APROVADO`
+  **e** `ATIVO=SIM` **e** tiver o consentimento válido (frase exata do
+  formulário) **e** campos essenciais corretos — **campo vazio nunca aprova**;
 - Alterações e exclusões na planilha refletem no site na próxima sincronização
-  (no máximo 1 hora).
+  (no máximo 1 hora). Perfis desativados desaparecem da publicação seguinte.
 
 Guia para não programadores: **[docs/GUIA_ADMINISTRATIVO.md](docs/GUIA_ADMINISTRATIVO.md)**.
 
 ## 12. Como executar a sincronização manualmente
 
 ```bash
-# com CSV local (testes; não toca no Google):
-python scripts/sync_catalogo.py --csv scripts/modelo_planilha.csv --saida public/data --verbose
+# simulação com CSV exportado da planilha (nunca grava):
+python scripts/sync_catalogo.py --csv planilha.csv --saida public/data --dry-run --verbose
 
-# produção (usa variáveis de ambiente GOOGLE_SHEET_ID / GOOGLE_SERVICE_ACCOUNT_JSON):
-npm run sync
+# gravação local (exige PUBLIC_ID_SECRET):
+npm run sync            # sync_catalogo.py --publicar
 
-# ver o que aconteceria sem gravar nada:
+# contra o Google real, em simulação (usa variáveis de ambiente):
 npm run sync:dry
 ```
 
-O sincronizador grava arquivos de forma **atômica** e **nunca sobrescreve** o
-catálogo existente quando há falha de autenticação, estrutura ou processamento.
+Sem `--publicar` (ou com a variável do repositório diferente de `SIM`), o
+modo Google **só simula** — trava de segurança da primeira publicação. O
+sincronizador grava de forma **atômica** e **nunca sobrescreve** o catálogo
+existente em falhas de autenticação, estrutura ou processamento. Sem mudanças
+reais no conteúdo público, o arquivo não é reescrito (sem commits vazios).
 
 ## 13. Como configurar o GitHub Actions
 
-Os workflows já estão em `.github/workflows/`:
+O workflow **`sincronizar-profissionais.yml`** já existe:
 
-- **`sync-catalogo.yml`** — roda a cada hora (`cron: 0 * * * *`) e via
-  `workflow_dispatch`; sincroniza, valida, testa, builda e faz commit **apenas
-  quando os dados públicos mudarem**. Permissões mínimas (`contents: write`);
-  nunca roda em pull requests (sem acesso a segredos de terceiros).
-- **`ci.yml`** — testes e build a cada push/PR, **sem acesso a segredos**
-  (`contents: read`).
+- Roda a cada hora e via **Run workflow** (com opção **dry_run**);
+- **Grava somente** quando a variável `HABILITAR_PUBLICACAO=SIM` e a execução
+  não é simulação — antes disso, relata o que seria publicado sem gravar;
+- Em modo gravação: sincroniza → valida JSON → testes → build → commit
+  **apenas com mudança real** → push → **Deploy Hook** do Cloudflare Pages
+  (se configurado; distingue “deploy solicitado” de “deploy concluído”);
+- Permissões mínimas (`contents: write`), `concurrency` contra execuções
+  simultâneas, sem acesso a segredos em pull requests;
+- Commits com `GITHUB_TOKEN` não disparam outros workflows (limitação do
+  GitHub) — por isso o próprio workflow testa e builda antes do commit.
 
-Basta configurar os Secrets do item 10 e habilitar Actions no repositório.
-Detalhes em **[docs/GITHUB_ACTIONS.md](docs/GITHUB_ACTIONS.md)**.
+Detalhes em **[docs/GITHUB_ACTIONS.md](docs/GITHUB_ACTIONS.md)**. Basta
+configurar os Secrets do item 10 e habilitar Actions no repositório.
 
 ## 14. Como publicar no Cloudflare Pages
 
@@ -260,17 +276,18 @@ atualização/desativação, falhas de autenticação, comportamento sem registr
 ## Estado atual e pendências externas
 
 O projeto está completo e funcional localmente (build, testes e preview
-verificados). As integrações externas **não foram testadas com credenciais reais**
-(pois não existem ainda). Antes da publicação oficial:
+verificados, inclusive simulação de sincronização com a estrutura real da
+planilha). A integração com o Google **não foi executada com credenciais
+reais** — configure o seguinte para ativar:
 
-- [ ] Criar o Google Forms e configurar `PUBLIC_GOOGLE_FORM_CADASTRO_URL`;
-- [ ] Criar planilha + colunas administrativas e compartilhar com a conta de serviço;
-- [ ] Configurar os Secrets `GOOGLE_SHEET_ID` e `GOOGLE_SERVICE_ACCOUNT_JSON`;
-- [ ] (Opcional) Formulários de alteração e denúncia + `PUBLIC_CONTATO_EMAIL`;
-- [ ] Conectar o repositório ao Cloudflare Pages;
-- [ ] Preencher os trechos `[PREENCHER: …]` das páginas `/privacidade/` e `/termos/`;
-- [ ] (Futuro) Definir nome definitivo em `src/config/site.ts` e, havendo domínio,
-      definir `PUBLIC_SITE_URL`.
+- [ ] Criar conta de serviço no Google Cloud e compartilhar a planilha com ela (leitor);
+- [ ] Secrets: `GOOGLE_SERVICE_ACCOUNT_JSON`, `PUBLIC_ID_SECRET` (`openssl rand -hex 32`)
+      e, se quiser, `CLOUDFLARE_DEPLOY_HOOK_URL`;
+- [ ] Rodar o workflow em simulação e conferir o cadastro de teste aprovado;
+- [ ] Definir a variável `HABILITAR_PUBLICACAO=SIM` para liberar a gravação;
+- [ ] Conectar o repositório ao Cloudflare Pages (build `npm run build`, saída `dist`);
+- [ ] Definir `PUBLIC_SITE_URL` quando houver domínio próprio;
+- [ ] Preencher os trechos `[PREENCHER: …]` de `/privacidade/` e `/termos/`.
 
 ## Segurança e privacidade — resumo
 

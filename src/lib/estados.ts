@@ -47,8 +47,8 @@ export function validarUF(valor: string): valor is UF {
 }
 
 /**
- * Aceita sigla ("sp", "SP") ou nome do estado ("São Paulo", "sao paulo")
- * e devolve a sigla normalizada, ou null quando inválido.
+ * Aceita sigla ("sp", "SP"), formato do formulário ("RJ - Rio de Janeiro")
+ * ou nome do estado ("São Paulo") e devolve a sigla normalizada, ou null.
  */
 export function normalizarUF(valor: string): UF | null {
   const limpo = valor
@@ -59,8 +59,10 @@ export function normalizarUF(valor: string): UF | null {
     .replace(/\s+/g, ' ')
     .trim();
   if (!limpo) return null;
-  const sigla = limpo.toUpperCase();
-  if (ehUF(sigla)) return sigla;
+  const partes = limpo.split(' ');
+  if (partes[0].length === 2 && ehUF(partes[0].toUpperCase())) {
+    return partes[0].toUpperCase() as UF; // "rj - rio de janeiro" ou "rj"
+  }
   for (const uf of UFS) {
     if (normalizarNome(NOMES_POR_UF[uf]) === limpo) return uf;
   }

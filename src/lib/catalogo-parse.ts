@@ -1,16 +1,16 @@
 /**
- * Tipos e validação do catálogo público (isomórfico: usado no build pelo
- * servidor e no navegador pela página de busca).
+ * Tipos e validação do catálogo público (isomórfico: build e navegador).
  *
- * Somente campos autorizados para publicação existem aqui. E-mails
- * administrativos, observações internas e dados de registros não aprovados
- * nunca chegam a este formato — o sincronizador (scripts/sync_catalogo.py)
- * garante isso na origem e esta validação confere na leitura.
+ * Contrato público definido na integração (scripts/sync_catalogo.py gera
+ * por allowlist): id, nome, categoria, categoriaSlug, profissao, descricao,
+ * uf, estado, municipio, municipioSlug, bairros, outros_municipios,
+ * atendimento_remoto, whatsapp, atualizadoEm. Nada além disso existe aqui —
+ * e-mails, endereço comercial e observações internas jamais são exportados.
  */
-import { UFS, type UF } from './estados';
+import { UFS, NOMES_POR_UF, type UF } from './estados';
 
 export interface Profissional {
-  /** Identificador público estável (não expõe dados privados). */
+  /** Identificador público estável (HMAC; não expõe dados privados). */
   id: string;
   nome: string;
   categoria: string;
@@ -18,14 +18,16 @@ export interface Profissional {
   profissao: string;
   descricao: string;
   uf: UF;
+  /** Nome do estado (ex.: "São Paulo"). */
+  estado: string;
   municipio: string;
   municipioSlug: string;
   /** Bairros/regiões atendidas. */
-  regioes: string[];
+  bairros: string[];
   /** Outros municípios atendidos, quando informado. */
-  municipiosAtendidos: string[];
+  outros_municipios: string[];
   /** Atendimento remoto/online. */
-  remoto: boolean;
+  atendimento_remoto: boolean;
   /** WhatsApp normalizado no formato 55DDD9XXXXXXXX. */
   whatsapp: string;
   /** Data de atualização pública (YYYY-MM-DD). */
@@ -46,7 +48,7 @@ export type ResultadoAnalise =
 
 const CAMPOS_TEXTO: (keyof Profissional)[] = [
   'id', 'nome', 'categoria', 'categoriaSlug', 'profissao', 'descricao',
-  'uf', 'municipio', 'municipioSlug', 'whatsapp', 'atualizadoEm',
+  'uf', 'estado', 'municipio', 'municipioSlug', 'whatsapp', 'atualizadoEm',
 ];
 
 const REGEX_ID = /^[a-z0-9-]{4,64}$/;
@@ -57,6 +59,7 @@ const TAMANHO_MAXIMO: Partial<Record<keyof Profissional, number>> = {
   nome: 160,
   profissao: 120,
   categoria: 120,
+  estado: 120,
   descricao: 2000,
   municipio: 120,
 };
@@ -83,8 +86,8 @@ function listaDeTextos(valor: unknown, erros: string[], prefixo: string, campo: 
 }
 
 /**
- * Valida a estrutura completa do catálogo. Retorna todos os problemas
- * encontrados de uma vez, para facilitar o diagnóstico no CI.
+ * Valida a estrutura completa do catálogo. Retorna todos os problemas de
+ * uma vez para facilitar o diagnóstico no CI.
  */
 export function analisarCatalogo(dados: unknown): ResultadoAnalise {
   const erros: string[] = [];
@@ -140,6 +143,9 @@ export function analisarCatalogo(dados: unknown): ResultadoAnalise {
       if (!(UFS as readonly string[]).includes(p.uf)) {
         erros.push(`${prefixo}: UF inválida ("${p.uf}").`);
         itemValido = false;
+      } else if (p.estado !== NOMES_POR_UF[p.uf as UF]) {
+        erros.push(`${prefixo}: "estado" ("${p.estado}") não corresponde à UF ("${p.uf}").`);
+        itemValido = false;
       }
       if (!REGEX_SLUG.test(p.categoriaSlug)) {
         erros.push(`${prefixo}: "categoriaSlug" inválida.`);
@@ -166,8 +172,8 @@ export function analisarCatalogo(dados: unknown): ResultadoAnalise {
       }
     }
 
-    if (item.remoto !== undefined && typeof item.remoto !== 'boolean') {
-      erros.push(`${prefixo}: "remoto" deve ser verdadeiro/falso.`);
+    if (item.atendimento_remoto !== undefined && typeof item.atendimento_remoto !== 'boolean') {
+      erros.push(`${prefixo}: "atendimento_remoto" deve ser verdadeiro/falso.`);
       itemValido = false;
     }
 
@@ -180,9 +186,9 @@ export function analisarCatalogo(dados: unknown): ResultadoAnalise {
         profissao: p.profissao.trim(),
         descricao: p.descricao.trim(),
         municipio: p.municipio.trim(),
-        regioes: listaDeTextos(item.regioes, erros, prefixo, 'regioes'),
-        municipiosAtendidos: listaDeTextos(item.municipiosAtendidos, erros, prefixo, 'municipiosAtendidos'),
-        remoto: item.remoto === true,
+        bairros: listaDeTextos(item.bairros, erros, prefixo, 'bairros'),
+        outros_municipios: listaDeTextos(item.outros_municipios, erros, prefixo, 'outros_municipios'),
+        atendimento_remoto: item.atendimento_remoto === true,
       });
     }
   });

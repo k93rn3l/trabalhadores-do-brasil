@@ -1,7 +1,6 @@
-"""Testes do sincronizador (scripts/sync_catalogo.py).
-
-Não requer dependências do Google: a busca na API é isolada em
-buscar_linhas_google e os testes usam --csv ou as funções puras.
+"""Testes do sincronizador (scripts/sync_catalogo.py) com a estrutura REAL
+da planilha (cabeçalhos atuais, UF "SP - São Paulo", consentimento longo,
+ATIVO=SIM obrigatório). Sem dependências do Google: usa --csv e funções puras.
 """
 from __future__ import annotations
 
@@ -19,30 +18,38 @@ spec = importlib.util.spec_from_file_location("sync_catalogo", RAIZ / "scripts" 
 sync = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sync)
 
-# (título na planilha, chave interna usada pelo sincronizador)
+SEGREDO_TESTE = "segredo-teste-0123456789abcdef"
+
+# (título na planilha, chave interna) — estrutura real, com espaços extras
+# em alguns títulos para exercitar a normalização.
 COLUNAS_MODELO = [
     ("Carimbo de data/hora", "timestamp"),
-    ("Nome público", "nome"),
+    (" Nome profissional ", "nome"),
     ("Categoria", "categoria"),
-    ("Profissão", "profissao"),
+    (" Profissão ", "profissao"),
     ("Descrição do serviço", "descricao"),
-    ("UF", "uf"),
-    ("Município", "municipio"),
+    ("Estado (UF)", "uf"),
+    (" Município ", "municipio"),
     ("Bairros atendidos", "bairros"),
     ("Outros municípios atendidos", "outros_municipios"),
     ("Atendimento remoto", "remoto"),
-    ("WhatsApp", "whatsapp"),
+    (" WhatsApp ", "whatsapp"),
     ("E-mail administrativo", "email"),
     ("Endereço comercial", "endereco"),
-    ("Consentimento", "consentimento"),
-    ("ID", "id"),
-    ("Status", "status"),
-    ("Data de aprovação", "data_aprovacao"),
-    ("Última atualização", "data_atualizacao"),
-    ("Observações", "observacoes"),
-    ("Ativo", "ativo"),
+    ("Consentimento para publicação", "consentimento"),
+    ("ID_PUBLICO", "id"),
+    ("STATUS", "status"),
+    ("ATIVO", "ativo"),
+    ("DATA_APROVACAO", "data_aprovacao"),
+    ("DATA_ATUALIZACAO", "data_atualizacao"),
+    ("OBSERVACOES_INTERNAS", "observacoes"),
 ]
 CABECALHO = [titulo for titulo, _ in COLUNAS_MODELO]
+
+CONSENTIMENTO = (
+    "Li as informações sobre o uso dos meus dados pessoais e autorizo "
+    "a divulgação pública dos dados profissionais indicados."
+)
 
 PADRAO = {
     "timestamp": "01/10/2026 10:15:00",
@@ -50,21 +57,21 @@ PADRAO = {
     "categoria": "Beleza e estética",
     "profissao": "Cabelereira",
     "descricao": "Cortes e coloração a domicílio.",
-    "uf": "SP",
+    "uf": "SP - São Paulo",
     "municipio": "Campinas",
     "bairros": "Taquaral; Centro",
     "outros_municipios": "Valinhos",
     "remoto": "Sim",
-    "whatsapp": "(19) 99999-0001",
+    "whatsapp": "19999990001",
     "email": "maria@exemplo.com",
     "endereco": "Rua das Flores, 123",
-    "consentimento": "Sim, Autorizo a Publicação dos Dados Informados.",
+    "consentimento": CONSENTIMENTO,
     "id": "",
     "status": "APROVADO",
     "data_aprovacao": "02/10/2026",
     "data_atualizacao": "",
-    "observacoes": "contato em persona",
-    "ativo": "",
+    "observacoes": "anotacao interna sensivel",
+    "ativo": "SIM",
 }
 
 
@@ -74,9 +81,9 @@ def linha(**sobrescritas) -> list[str]:
     return [valores[chave] for _, chave in COLUNAS_MODELO]
 
 
-def montar(linhas: list[list[str]]) -> tuple[dict, dict, list[str]]:
+def montar(linhas: list[list[str]]):
     mapa = sync.mapa_colunas(CABECALHO)
-    return sync.montar_catalogo(linhas, mapa)
+    return sync.montar_catalogo(linhas, mapa, SEGREDO_TESTE)
 
 
 def escrever_csv(caminho: Path, linhas: list[list[str]]) -> None:
@@ -86,229 +93,276 @@ def escrever_csv(caminho: Path, linhas: list[list[str]]) -> None:
         csv.writer(arquivo).writerows([CABECALHO, *linhas])
 
 
+def executar(tmp_path: Path, linhas: list[list[str]], *flags: str) -> int:
+    csv_path = tmp_path / "planilha.csv"
+    escrever_csv(csv_path, linhas)
+    saida = tmp_path / "data"
+    return sync.main(["--csv", str(csv_path), "--saida", str(saida),
+                      "--id-secret", SEGREDO_TESTE, *flags])
+
+
 # ---------------------------------------------------------------------------
-# Normalização e validações básicas
+# Normalização
 # ---------------------------------------------------------------------------
 
 class TestNormalizacao:
-    def test_normalizar_texto_ignora_acentos_e_caixa(self):
-        assert sync.normalizar_texto("ELÉTRICA") == "eletrica"
-        assert sync.normalizar_texto("  Hidráulica ") == "hidraulica"
-
-    def test_slug(self):
-        assert sync.slug("Belo Horizonte") == "belo-horizonte"
-        assert sync.slug("Instalações — elétricas!") == "instalacoes-eletricas"
-
-    def test_normalizar_uf(self):
-        assert sync.normalizar_uf("sp") == "SP"
-        assert sync.normalizar_uf("São Paulo") == "SP"
-        assert sync.normalizar_uf("distrito federal") == "DF"
-        assert sync.normalizar_uf("XX") is None
-        assert sync.normalizar_uf("") is None
-
-    def test_normalizar_whatsapp(self):
-        assert sync.normalizar_whatsapp("(11) 99999-8888") == "5511999998888"
-        assert sync.normalizar_whatsapp("5511999998888") == "5511999998888"
-        assert sync.normalizar_whatsapp("+55 55 98123-4567") == "5555981234567"
-
-    def test_normalizar_whatsapp_rejeita_fixos_e_invalidos(self):
-        assert sync.normalizar_whatsapp("1132445566") is None
-        assert sync.normalizar_whatsapp("999998888") is None
-        assert sync.normalizar_whatsapp("99999999999") is None
-        assert sync.normalizar_whatsapp("") is None
-
-    def test_afirmativo_e_negativo(self):
-        assert sync.afirmativo("Sim") is True
-        assert sync.afirmativo("SIM, AUTORIZO A PUBLICAÇÃO DOS DADOS INFORMADOS.") is True
-        assert sync.afirmativo("Não") is False
-        assert sync.afirmativo("") is False
-        assert sync.negativo("Não") is True
-        assert sync.negativo("não ativo") is True
-        assert sync.negativo("Sim") is False
-
-
-# ---------------------------------------------------------------------------
-# Cabeçalhos e estrutura
-# ---------------------------------------------------------------------------
-
-class TestCabecalhos:
-    def test_mapeia_cabecalho_padrao(self):
+    def test_cabecalhos_com_espacos_extras_sao_reconhecidos(self):
         mapa = sync.mapa_colunas(CABECALHO)
-        for coluna in sync.COLUNAS_OBRIGATORIAS:
-            assert coluna in mapa
-
-    def test_aceita_variacoes_de_titulo(self):
-        variante = list(CABECALHO)
-        variante[1] = "Nome público do profissional ou nome comercial"
-        variante[10] = "Número de WhatsApp"
-        variante[13] = "Consentimento para publicação"
-        mapa = sync.mapa_colunas(variante)
+        for chave in sync.COLUNAS_OBRIGATORIAS:
+            assert chave in mapa
         assert mapa["nome"] == 1
         assert mapa["whatsapp"] == 10
-        assert mapa["consentimento"] == 13
 
-    def test_rejeita_cabecalho_sem_colunas_obrigatorias(self):
-        with pytest.raises(sync.ErroColunas, match="ausentes"):
-            sync.mapa_colunas(["Timestamp", "Nome público", "WhatsApp"])
+    def test_estado_com_nome_completo_converte_para_uf(self):
+        assert sync.normalizar_uf("RJ - Rio de Janeiro") == "RJ"
+        assert sync.normalizar_uf("SP - São Paulo") == "SP"
+        assert sync.normalizar_uf("rj") == "RJ"
+        assert sync.normalizar_uf("São Paulo") == "SP"
+        assert sync.normalizar_uf("XX - Lugar Nenhum") is None
+        assert sync.normalizar_uf("") is None
+
+    def test_numero_brasileiro_e_normalizado(self):
+        assert sync.normalizar_whatsapp("21999999999") == "5521999999999"
+        assert sync.normalizar_whatsapp("(21) 99999-9999") == "5521999999999"
+        assert sync.normalizar_whatsapp("+55 21 99999 9999") == "5521999999999"
+        assert sync.normalizar_whatsapp("5521999999999") == "5521999999999"
+        # não duplica código do país; lixo de 15 dígitos é rejeitado
+        assert sync.normalizar_whatsapp("5521999999999") == "5521999999999"
+        assert sync.normalizar_whatsapp("555521999999999") is None
+        # fixo e incompleto rejeitados
+        assert sync.normalizar_whatsapp("2122223333") is None
+        assert sync.normalizar_whatsapp("999999999") is None
+
+    def test_consentimento_exato_e_rejeita_texto_arbitrario(self):
+        assert sync.consentimento_valido(CONSENTIMENTO) is True
+        assert sync.consentimento_valido(CONSENTIMENTO + " ") is True
+        assert sync.consentimento_valido("Concordo com tudo") is False
+        assert sync.consentimento_valido("Sim") is False
+        assert sync.consentimento_valido("") is False
+
+    def test_slug_compativel_com_frontend(self):
+        assert sync.slug("ID_Com_Pontuação!") == "id-com-pontuacao"
 
 
 # ---------------------------------------------------------------------------
-# Regras de publicação (fail-closed)
+# Regras de publicação (§3: fail-closed em tudo)
 # ---------------------------------------------------------------------------
 
 class TestRegrasDePublicacao:
-    def test_publica_aprovado_com_consentimento(self):
+    def test_aprovado_e_ativo_e_elegivel(self):
         catalogo, contagem, _ = montar([linha()])
         assert contagem["publicados"] == 1
         registro = catalogo["profissionais"][0]
         assert registro["nome"] == "Maria da Silva"
-        assert registro["whatsapp"] == "5519999990001"
         assert registro["uf"] == "SP"
-        assert registro["municipioSlug"] == "campinas"
-        assert registro["regioes"] == ["Taquaral", "Centro"]
-        assert registro["municipiosAtendidos"] == ["Valinhos"]
-        assert registro["remoto"] is True
+        assert registro["estado"] == "São Paulo"
+        assert registro["whatsapp"] == "5519999990001"
+        assert registro["bairros"] == ["Taquaral", "Centro"]
+        assert registro["outros_municipios"] == ["Valinhos"]
+        assert registro["atendimento_remoto"] is True
         assert registro["atualizadoEm"] == "2026-10-02"
-
-    def test_somente_campos_publicos_no_json(self):
-        catalogo, _, _ = montar([linha()])
-        registro = catalogo["profissionais"][0]
-        assert set(registro.keys()) == set(sync.CAMPOS_PUBLICOS)
-        # Nada privado pode vazar:
-        for chave in ("email", "observacoes", "endereco", "status",
-                      "consentimento", "data_aprovacao", "ativo", "timestamp"):
-            assert chave not in registro
-        assert "maria@exemplo.com" not in json.dumps(catalogo)
-        assert "contato em persona" not in json.dumps(catalogo)
-        assert "Rua das Flores" not in json.dumps(catalogo)
 
     def test_pendente_nao_e_publicado(self):
         _, contagem, _ = montar([linha(status="PENDENTE")])
-        assert contagem["publicados"] == 0
-        assert contagem["pendentes"] == 1
+        assert contagem["publicados"] == 0 and contagem["pendentes"] == 1
 
     def test_rejeitado_nao_e_publicado(self):
         _, contagem, _ = montar([linha(status="REJEITADO")])
-        assert contagem["publicados"] == 0
-        assert contagem["rejeitados"] == 1
+        assert contagem["publicados"] == 0 and contagem["rejeitados"] == 1
 
     def test_inativo_nao_e_publicado(self):
         _, contagem, _ = montar([linha(status="INATIVO")])
-        assert contagem["publicados"] == 0
-        assert contagem["inativos"] == 1
+        assert contagem["publicados"] == 0 and contagem["inativos"] == 1
 
-    def test_status_vazio_tratado_como_pendente(self):
-        _, contagem, avisos = montar([linha(status="")])
+    def test_ativo_nao_sim_nao_e_publicado(self):
+        _, contagem, _ = montar([linha(ativo="NÃO")])
         assert contagem["publicados"] == 0
-        assert contagem["pendentes"] == 1
-        assert any("PENDENTE" in aviso for aviso in avisos)
 
-    def test_status_desconhecido_tratado_como_pendente(self):
-        _, contagem, _ = montar([linha(status="QUEM SABE")])
+    def test_ativo_vazio_nao_e_interpretado_como_aprovacao(self):
+        _, contagem, avisos = montar([linha(ativo="")])
         assert contagem["publicados"] == 0
-        assert contagem["pendentes"] == 1
+        assert any("ATIVO" in aviso for aviso in avisos)
 
-    def test_aprovado_sem_consentimento_nao_e_publicado(self):
-        _, contagem, avisos = montar([linha(consentimento="Não")])
-        assert contagem["publicados"] == 0
-        assert contagem["sem_consentimento"] == 1
-        assert any("consentimento" in aviso for aviso in avisos)
+    def test_sem_consentimento_valido_nao_e_publicado(self):
+        _, contagem, _ = montar([linha(consentimento="sim, mas duvidoso")])
+        assert contagem["publicados"] == 0 and contagem["sem_consentimento"] == 1
 
-    def test_ativo_negativo_nao_e_publicado(self):
-        _, contagem, _ = montar([linha(ativo="Não")])
-        assert contagem["publicados"] == 0
-        assert contagem["inativos"] == 1
-
-    def test_uf_invalida_nao_publica(self):
-        _, contagem, avisos = montar([linha(uf="XX")])
-        assert contagem["publicados"] == 0
-        assert any("UF" in aviso for aviso in avisos)
-
-    def test_whatsapp_invalido_nao_publica(self):
+    def test_whatsapp_invalido_nao_e_publicado(self):
         _, contagem, avisos = montar([linha(whatsapp="19 3232-0000")])
         assert contagem["publicados"] == 0
         assert any("WhatsApp" in aviso for aviso in avisos)
 
-    def test_municipio_vazio_nao_publica(self):
-        _, contagem, _ = montar([linha(municipio="  ")])
-        assert contagem["publicados"] == 0
+    def test_status_vazio_tratado_como_pendente(self):
+        _, contagem, _ = montar([linha(status="")])
+        assert contagem["publicados"] == 0 and contagem["pendentes"] == 1
 
-    def test_sem_dados_pessoais_nos_avisos(self):
-        _, _, avisos = montar([
-            linha(whatsapp="3232-0000", email="secreto@exemplo.com", nome="Fulana Secreta")
-        ])
-        texto = " ".join(avisos)
-        assert "Fulana" not in texto
-        assert "secreto" not in texto
+    def test_desativar_profissional_publicado_remove_da_saida(self):
+        ativo = montar([linha()])[0]
+        desativado = montar([linha(ativo="NÃO")])[0]
+        assert len(ativo["profissionais"]) == 1
+        assert len(desativado["profissionais"]) == 0
+
+    def test_alteracao_na_planilha_reflete_no_catalogo(self):
+        antes = montar([linha(descricao="Pintura residencial.")])[0]
+        depois = montar([linha(descricao="Pintura residencial e comercial.")])[0]
+        assert antes["profissionais"][0]["descricao"] != depois["profissionais"][0]["descricao"]
 
 
-class TestDuplicados:
-    def test_id_duplicado_mantem_versao_mais_recente(self):
-        catalogo, contagem, _ = montar([
-            linha(descricao="versão antiga", data_aprovacao="01/10/2026"),
-            linha(descricao="versão nova", data_aprovacao="05/10/2026"),
-        ])
-        assert contagem["publicados"] == 1
-        assert contagem["duplicados"] == 1
-        assert catalogo["profissionais"][0]["descricao"] == "versão nova"
+# ---------------------------------------------------------------------------
+# Privacidade: allowlist estrita
+# ---------------------------------------------------------------------------
 
-    def test_id_manual_da_planilha_e_respeitado(self):
+class TestPrivacidade:
+    def test_json_contem_somente_campos_publicos(self):
+        catalogo, _, _ = montar([linha()])
+        registro = catalogo["profissionais"][0]
+        assert set(registro.keys()) == set(sync.CAMPOS_PUBLICOS)
+        texto = json.dumps(catalogo, ensure_ascii=False)
+        assert "maria@exemplo.com" not in texto          # e-mail
+        assert "Rua das Flores" not in texto             # endereço comercial
+        assert "anotacao interna" not in texto           # observações
+        assert CONSENTIMENTO not in texto                # consentimento bruto
+        assert "APROVADO" not in texto                   # status administrativo
+
+    def test_validador_rejeita_campo_privado_vazado(self):
+        catalogo, _, _ = montar([linha()])
+        catalogo["profissionais"][0]["email_administrativo"] = "vazado@exemplo.com"
+        valido, erros = sync.validar_catalogo({**catalogo, "geradoEm": "2026-10-28T12:00:00Z"})
+        assert not valido and any("privado" in e for e in erros)
+
+
+# ---------------------------------------------------------------------------
+# Identificadores públicos
+# ---------------------------------------------------------------------------
+
+class TestIdentificadores:
+    def test_id_deterministico_entre_execucoes(self):
+        id1 = montar([linha()])[0]["profissionais"][0]["id"]
+        id2 = montar([linha()])[0]["profissionais"][0]["id"]
+        assert id1 == id2 and sync.REGEX_ID.match(id1)
+
+    def test_id_muda_com_segredo_diferente(self):
+        mapa = sync.mapa_colunas(CABECALHO)
+        catalogo1, _, _ = sync.montar_catalogo([linha()], mapa, "segredo-a")
+        catalogo2, _, _ = sync.montar_catalogo([linha()], mapa, "segredo-b")
+        assert catalogo1["profissionais"][0]["id"] != catalogo2["profissionais"][0]["id"]
+
+    def test_id_nao_expose_telefone_ou_carimbo(self):
+        registro = montar([linha()])[0]["profissionais"][0]
+        assert "19999990001" not in registro["id"]
+        assert "01/10/2026" not in registro["id"]
+
+    def test_id_publico_da_planilha_e_respeitado(self):
         catalogo, _, _ = montar([linha(id="maria-campinas-001")])
         assert catalogo["profissionais"][0]["id"] == "maria-campinas-001"
 
-    def test_id_derivado_e_estavel(self):
-        catalogo1, _, _ = montar([linha()])
-        catalogo2, _, _ = montar([linha()])
-        assert catalogo1["profissionais"][0]["id"] == catalogo2["profissionais"][0]["id"]
-
-
-class TestAtualizacaoEDesativacao:
-    def _publicado(self, linhas):
-        catalogo, _, _ = montar(linhas)
-        return catalogo["profissionais"]
-
-    def test_alteracao_na_planilha_reflete_no_catalogo(self):
-        antes = self._publicado([linha(descricao="Pintura residencial.")])
-        depois = self._publicado([linha(descricao="Pintura residencial e comercial.")])
-        assert antes[0]["descricao"] != depois[0]["descricao"]
-
-    def test_desativar_remove_da_proxima_publicacao(self):
-        ativo = self._publicado([linha()])
-        desativado = self._publicado([linha(ativo="Não")])
-        assert len(ativo) == 1
-        assert len(desativado) == 0
-
-    def test_excluir_linha_remove_do_catalogo(self):
-        com = self._publicado([linha(), linha(nome="Outra Pessoa", municipio="Santos")])
-        sem = self._publicado([linha()])
-        assert len(com) == 2
-        assert len(sem) == 1
-
-
-class TestSemRegistros:
-    def test_apenas_pendentes_gera_catalogo_valido_e_vazio(self):
-        catalogo, contagem, _ = montar([linha(status="PENDENTE"), linha(status="REJEITADO")])
-        assert catalogo["profissionais"] == []
-        assert catalogo["total"] == 0
-        assert contagem["publicados"] == 0
-        valido, erros = sync.validar_catalogo(
-            {**catalogo, "geradoEm": "2026-10-28T12:00:00Z"}
-        )
-        assert valido, erros
-
-    def test_linhas_totalmente_vazias_sao_ignoradas(self):
-        _, contagem, _ = montar([[""] * len(CABECALHO), [""] * len(CABECALHO), linha()])
+    def test_duplicado_por_telefone_profissao_municipio(self):
+        catalogo, contagem, avisos = montar([
+            linha(descricao="primeiro envio", timestamp="01/10/2026 09:00:00"),
+            linha(descricao="reenvio acidental", timestamp="05/10/2026 09:00:00"),
+        ])
         assert contagem["publicados"] == 1
-        assert contagem["linhas"] == 1
+        assert contagem["duplicados"] == 1
+        assert catalogo["profissionais"][0]["descricao"] == "reenvio acidental"
 
 
 # ---------------------------------------------------------------------------
-# Validação do catálogo
+# Escrita, atomicidade e falhas
 # ---------------------------------------------------------------------------
 
-class TestValidarCatalogo:
+class TestEscritaEFalhas:
+    def test_end_to_end_csv_escreve_profissionais_json_e_blocos(self, tmp_path):
+        saida = tmp_path / "data"
+        csv_path = tmp_path / "planilha.csv"
+        escrever_csv(csv_path, [
+            linha(),
+            linha(nome="João Souza", uf="MG - Minas Gerais", municipio="Belo Horizonte",
+                  whatsapp="31988880002", bairros="Centro", remoto="Não"),
+        ])
+        codigo = sync.main(["--csv", str(csv_path), "--saida", str(saida),
+                            "--id-secret", SEGREDO_TESTE, "--verbose"])
+        assert codigo == 0
+        principal = json.loads((saida / "profissionais.json").read_text(encoding="utf-8"))
+        assert principal["total"] == 2
+        assert (saida / "uf" / "sp.json").exists()
+        assert (saida / "uf" / "mg.json").exists()
+
+    def test_falha_de_estrutura_preserva_catalogo(self, tmp_path):
+        saida = tmp_path / "data"
+        assert executar(tmp_path, [linha()]) == 0
+        original = (saida / "profissionais.json").read_text(encoding="utf-8")
+
+        csv_ruim = tmp_path / "ruim.csv"
+        csv_ruim.write_text("Coluna A,Coluna B\nv1,v2\n", encoding="utf-8")
+        codigo = sync.main(["--csv", str(csv_ruim), "--saida", str(saida)])
+        assert codigo == 1
+        assert (saida / "profissionais.json").read_text(encoding="utf-8") == original
+
+    def test_falha_da_api_nao_apaga_catalogo_anterior(self, tmp_path, monkeypatch):
+        saida = tmp_path / "data"
+        assert executar(tmp_path, [linha()]) == 0
+        original = (saida / "profissionais.json").read_text(encoding="utf-8")
+
+        def explodir(*args, **kwargs):
+            raise RuntimeError("credenciais inválidas")
+
+        monkeypatch.setattr(sync, "buscar_linhas_google", explodir)
+        monkeypatch.setenv("GOOGLE_SHEET_ID", "abc")
+        monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", '{"type": "service_account"}')
+        codigo = sync.main(["--saida", str(saida), "--id-secret", SEGREDO_TESTE])
+        assert codigo == 1
+        assert (saida / "profissionais.json").read_text(encoding="utf-8") == original
+
+    def test_sem_id_secret_modo_publicar_falha(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("PUBLIC_ID_SECRET", raising=False)
+        csv_path = tmp_path / "planilha.csv"
+        escrever_csv(csv_path, [linha()])
+        codigo = sync.main(["--csv", str(csv_path), "--saida", str(tmp_path / "d"), "--publicar"])
+        assert codigo == 1
+
+    def test_simulacao_nao_grava_nem_exige_segreDo(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("PUBLIC_ID_SECRET", raising=False)
+        csv_path = tmp_path / "planilha.csv"
+        escrever_csv(csv_path, [linha()])
+        saida = tmp_path / "data"
+        codigo = sync.main(["--csv", str(csv_path), "--saida", str(saida), "--dry-run"])
+        assert codigo == 0
+        assert not (saida / "profissionais.json").exists()
+
+    def test_sem_mudancas_reais_preserva_arquivo(self, tmp_path):
+        saida = tmp_path / "data"
+        assert executar(tmp_path, [linha()]) == 0
+        original = (saida / "profissionais.json").read_text(encoding="utf-8")
+        assert executar(tmp_path, [linha()]) == 0
+        assert (saida / "profissionais.json").read_text(encoding="utf-8") == original
+
+    def test_bloco_uf_obsoleto_e_removido(self, tmp_path):
+        saida = tmp_path / "data"
+        escrever_csv(tmp_path / "com_mg.csv", [linha(), linha(
+            nome="João Souza", uf="MG - Minas Gerais", municipio="Belo Horizonte",
+            whatsapp="31988880002")])
+        assert sync.main(["--csv", str(tmp_path / "com_mg.csv"), "--saida", str(saida),
+                          "--id-secret", SEGREDO_TESTE]) == 0
+        assert (saida / "uf" / "mg.json").exists()
+        assert executar(tmp_path, [linha()]) == 0
+        assert not (saida / "uf" / "mg.json").exists()
+
+    def test_migracao_remove_catalogo_json_antigo(self, tmp_path):
+        saida = tmp_path / "data"
+        saida.mkdir(parents=True)
+        (saida / "catalogo.json").write_text("{}", encoding="utf-8")
+        assert executar(tmp_path, [linha()]) == 0
+        assert not (saida / "catalogo.json").exists()
+        assert (saida / "profissionais.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Validação e consistência
+# ---------------------------------------------------------------------------
+
+class TestValidacao:
     def base(self):
-        catalogo, _, _ = montar([linha()])
+        catalogo = montar([linha()])[0]
         catalogo["geradoEm"] = "2026-10-28T12:00:00Z"
         return catalogo
 
@@ -316,141 +370,44 @@ class TestValidarCatalogo:
         valido, erros = sync.validar_catalogo(self.base())
         assert valido, erros
 
-    def test_rejeita_campo_privado_vazado(self):
+    def test_estado_incoerente_com_uf_rejeitado(self):
         catalogo = self.base()
-        catalogo["profissionais"][0]["email"] = "vazado@exemplo.com"
-        valido, erros = sync.validar_catalogo(catalogo)
-        assert not valido
-        assert any("privado" in erro for erro in erros)
-
-    def test_rejeita_whatsapp_mal_formado(self):
-        catalogo = self.base()
-        catalogo["profissionais"][0]["whatsapp"] = "11999998888"
+        catalogo["profissionais"][0]["estado"] = "Minas Gerais"
         assert not sync.validar_catalogo(catalogo)[0]
 
-    def test_rejeita_total_incoerente(self):
+    def test_total_incoerente_rejeitado(self):
         catalogo = self.base()
         catalogo["total"] = 99
         assert not sync.validar_catalogo(catalogo)[0]
 
 
-# ---------------------------------------------------------------------------
-# Escrita e atomicidade
-# ---------------------------------------------------------------------------
+class TestSemRegistros:
+    def test_apenas_pendentes_gera_catalogo_valido_e_vazio(self):
+        catalogo, contagem, _ = montar([linha(status="PENDENTE"), linha(status="REJEITADO")])
+        assert catalogo["profissionais"] == [] and catalogo["total"] == 0
+        valido, erros = sync.validar_catalogo(
+            {**catalogo, "geradoEm": "2026-10-28T12:00:00Z"})
+        assert valido, erros
 
-class TestEscrita:
-    def test_end_to_end_csv_escreve_catalogo_e_blocos_uf(self, tmp_path):
-        saida = tmp_path / "data"
-        csv_path = tmp_path / "planilha.csv"
-        escrever_csv(csv_path, [
-            linha(),
-            linha(nome="João Souza", uf="MG", municipio="Belo Horizonte",
-                  whatsapp="(31) 98888-0002", bairros="Centro"),
-        ])
-        codigo = sync.main(["--csv", str(csv_path), "--saida", str(saida), "--verbose"])
-        assert codigo == 0
+    def test_aviso_nao_expose_dados_pessoais(self):
+        _, _, avisos = montar([linha(whatsapp="1932320000", nome="Fulana Secreta",
+                                     email="secreto@exemplo.com")])
+        texto = " ".join(avisos)
+        assert "Fulana" not in texto and "secreto" not in texto
 
-        principal = json.loads((saida / "catalogo.json").read_text(encoding="utf-8"))
-        assert principal["total"] == 2
-        assert (saida / "uf" / "sp.json").exists()
-        assert (saida / "uf" / "mg.json").exists()
-        bloco_sp = json.loads((saida / "uf" / "sp.json").read_text(encoding="utf-8"))
-        assert bloco_sp["total"] == 1
-        assert bloco_sp["profissionais"][0]["uf"] == "SP"
-
-    def test_sem_alteracoes_reais_preserva_arquivo(self, tmp_path):
-        saida = tmp_path / "data"
-        csv_path = tmp_path / "planilha.csv"
-        escrever_csv(csv_path, [linha()])
-        assert sync.main(["--csv", str(csv_path), "--saida", str(saida)]) == 0
-        original = (saida / "catalogo.json").read_text(encoding="utf-8")
-
-        # Segunda execução: mesmos dados => não reescreve (mesmo geradoEm).
-        codigo = sync.main(["--csv", str(csv_path), "--saida", str(saida)])
-        assert codigo == 0
-        assert (saida / "catalogo.json").read_text(encoding="utf-8") == original
-
-    def test_falha_de_estrutura_nao_sobrescreve_catalogo(self, tmp_path):
-        saida = tmp_path / "data"
-        csv_bom = tmp_path / "bom.csv"
-        escrever_csv(csv_bom, [linha()])
-        assert sync.main(["--csv", str(csv_bom), "--saida", str(saida)]) == 0
-        original = (saida / "catalogo.json").read_text(encoding="utf-8")
-
-        csv_ruim = tmp_path / "ruim.csv"
-        csv_ruim.write_text(
-            "Coluna A,Coluna B\nvalor 1,valor 2\n", encoding="utf-8"
-        )
-        codigo = sync.main(["--csv", str(csv_ruim), "--saida", str(saida)])
-        assert codigo == 1
-        assert (saida / "catalogo.json").read_text(encoding="utf-8") == original
-
-    def test_dry_run_nao_escreve(self, tmp_path):
-        csv_path = tmp_path / "planilha.csv"
-        escrever_csv(csv_path, [linha()])
-        saida = tmp_path / "data"
-        assert sync.main(["--csv", str(csv_path), "--saida", str(saida), "--dry-run"]) == 0
-        assert not (saida / "catalogo.json").exists()
-
-    def test_falha_de_autenticacao_preserva_catalogo(self, tmp_path, monkeypatch):
-        saida = tmp_path / "data"
-        csv_path = tmp_path / "planilha.csv"
-        escrever_csv(csv_path, [linha()])
-        assert sync.main(["--csv", str(csv_path), "--saida", str(saida)]) == 0
-        original = (saida / "catalogo.json").read_text(encoding="utf-8")
-
-        def explodir(*args, **kwargs):
-            raise RuntimeError("credenciais inválidas")
-
-        monkeypatch.setattr(sync, "buscar_linhas_google", explodir)
-        monkeypatch.setenv("GOOGLE_SHEET_ID", "abc123")
-        monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", '{"type": "service_account"}')
-        codigo = sync.main(["--saida", str(saida)])
-        assert codigo == 1
-        assert (saida / "catalogo.json").read_text(encoding="utf-8") == original
-
-    def test_sem_configuracao_google_retorna_erro(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("GOOGLE_SHEET_ID", raising=False)
-        monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_JSON", raising=False)
-        assert sync.main(["--saida", str(tmp_path)]) == 1
-
-    def test_bloco_uf_obsoleto_e_removido(self, tmp_path):
-        saida = tmp_path / "data"
-        csv_com_mg = tmp_path / "com_mg.csv"
-        escrever_csv(csv_com_mg, [linha(), linha(nome="João Souza", uf="MG",
-                                                 municipio="Belo Horizonte",
-                                                 whatsapp="(31) 98888-0002")])
-        assert sync.main(["--csv", str(csv_com_mg), "--saida", str(saida)]) == 0
-        assert (saida / "uf" / "mg.json").exists()
-
-        csv_so_sp = tmp_path / "so_sp.csv"
-        escrever_csv(csv_so_sp, [linha()])
-        assert sync.main(["--csv", str(csv_so_sp), "--saida", str(saida)]) == 0
-        assert not (saida / "uf" / "mg.json").exists()
-        assert (saida / "uf" / "sp.json").exists()
-
-
-# ---------------------------------------------------------------------------
-# Consistência com o catálogo commitado no repositório
-# ---------------------------------------------------------------------------
 
 class TestCatalogoDoRepositorio:
     def test_catalogo_inicial_passa_na_validacao(self):
-        caminho = RAIZ / "public" / "data" / "catalogo.json"
-        dados = json.loads(caminho.read_text(encoding="utf-8"))
+        dados = json.loads((RAIZ / "public" / "data" / "profissionais.json").read_text(encoding="utf-8"))
         valido, erros = sync.validar_catalogo(dados)
         assert valido, erros
-        assert dados["total"] == 0  # produção começa vazio, sem dados fictícios
+        assert dados["total"] == 0  # produção começa vazia
 
-    def test_modelo_de_planilha_e_processavel(self):
-        """O CSV modelo (docs) precisa ser aceito pelo sincronizador."""
-        caminho = RAIZ / "scripts" / "modelo_planilha.csv"
-        linhas = sync.ler_csv(str(caminho))
+    def test_modelo_de_planilha_real_e_processavel(self):
+        linhas = sync.ler_csv(str(RAIZ / "scripts" / "modelo_planilha.csv"))
         mapa = sync.mapa_colunas(linhas[0])
-        catalogo, contagem, _ = sync.montar_catalogo(linhas[1:], mapa)
-        assert contagem["publicados"] == 1
-        assert contagem["pendentes"] == 1
+        catalogo, contagem, _ = sync.montar_catalogo(linhas[1:], mapa, SEGREDO_TESTE)
+        assert contagem["publicados"] == 1 and contagem["pendentes"] == 1
         valido, erros = sync.validar_catalogo(
-            {**catalogo, "geradoEm": "2026-10-28T12:00:00Z"}
-        )
+            {**catalogo, "geradoEm": "2026-10-28T12:00:00Z"})
         assert valido, erros

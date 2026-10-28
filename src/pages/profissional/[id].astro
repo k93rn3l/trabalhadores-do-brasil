@@ -6,7 +6,6 @@ import ListaProfissionais from '../../components/ListaProfissionais.astro';
 import { carregarCatalogo } from '../../lib/catalogo-server';
 import { linkWhatsApp } from '../../lib/whatsapp';
 import { siteConfig } from '../../config/site';
-import { NOMES_POR_UF } from '../../lib/estados';
 import { formatarData } from '../../lib/formato';
 import { montarURLBusca } from '../../lib/busca';
 
@@ -43,8 +42,8 @@ const jsonLd = {
   },
   areaServed: [
     profissional.municipio,
-    ...profissional.regioes,
-    ...profissional.municipiosAtendidos,
+    ...profissional.bairros,
+    ...profissional.outros_municipios,
   ].slice(0, 10),
 };
 ---
@@ -68,21 +67,21 @@ const jsonLd = {
         <h1>{profissional.nome}</h1>
         <p>
           <strong>{profissional.profissao}</strong> — {profissional.municipio},
-          {NOMES_POR_UF[profissional.uf]} ({profissional.uf})
-          {profissional.remoto && ' · atende online'}
+          {profissional.estado} ({profissional.uf})
+          {profissional.atendimento_remoto && ' · atende online'}
         </p>
 
         {
-          profissional.regioes.length > 0 && (
+          profissional.bairros.length > 0 && (
             <p class="texto-suave" style="margin-bottom:0.4rem;">
-              <strong>Atende:</strong> {profissional.regioes.join(', ')}
+              <strong>Atende:</strong> {profissional.bairros.join(', ')}
             </p>
           )
         }
         {
-          profissional.municipiosAtendidos.length > 0 && (
+          profissional.outros_municipios.length > 0 && (
             <p class="texto-suave" style="margin-bottom:0.4rem;">
-              <strong>Atende também:</strong> {profissional.municipiosAtendidos.join(', ')}
+              <strong>Atende também:</strong> {profissional.outros_municipios.join(', ')}
             </p>
           )
         }

@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:python": "pytest scripts/tests -q",
-    "sync": "python scripts/sync_catalogo.py --saida public/data",
+    "sync": "python scripts/sync_catalogo.py --saida public/data --publicar",
     "sync:dry": "python scripts/sync_catalogo.py --saida public/data --dry-run --verbose"
   },
   "dependencies": {

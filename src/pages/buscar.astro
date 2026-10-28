@@ -90,7 +90,7 @@ const categoriasExtras = categoriasDisponiveis(catalogo.profissionais)
     const chave = uf || '*';
     const emCache = cache.get(chave);
     if (emCache) return emCache;
-    const url = uf ? `/data/uf/${uf.toLowerCase()}.json` : '/data/catalogo.json';
+    const url = uf ? `/data/uf/${uf.toLowerCase()}.json` : '/data/profissionais.json';
     const resposta = await fetch(url);
     if (resposta.status === 404) {
       cache.set(chave, []);

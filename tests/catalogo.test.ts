@@ -9,11 +9,12 @@ export const profissionalExemplo: Profissional = {
   profissao: 'Cabelereira',
   descricao: 'Cortes e coloração a domicílio.',
   uf: 'SP',
+  estado: 'São Paulo',
   municipio: 'Campinas',
   municipioSlug: 'campinas',
-  regioes: ['Taquaral', 'Centro'],
-  municipiosAtendidos: ['Valinhos'],
-  remoto: false,
+  bairros: ['Taquaral', 'Centro'],
+  outros_municipios: ['Valinhos'],
+  atendimento_remoto: false,
   whatsapp: '5519999998888',
   atualizadoEm: '2026-10-01',
 };
@@ -31,7 +32,7 @@ describe('analisarCatalogo', () => {
     expect(resultado.ok).toBe(true);
     if (resultado.ok) {
       expect(resultado.catalogo.total).toBe(1);
-      expect(resultado.catalogo.profissionais[0]?.nome).toBe('Maria da Silva');
+      expect(resultado.catalogo.profissionais[0]?.estado).toBe('São Paulo');
     }
   });
 
@@ -45,18 +46,14 @@ describe('analisarCatalogo', () => {
   });
 
   it('rejeita versão incorreta', () => {
-    const resultado = analisarCatalogo({ ...catalogoValido, versao: 2 });
-    expect(resultado.ok).toBe(false);
+    expect(analisarCatalogo({ ...catalogoValido, versao: 2 }).ok).toBe(false);
   });
 
   it('rejeita registros com campos obrigatórios ausentes', () => {
     const incompleto = { ...profissionalExemplo };
     delete (incompleto as Record<string, unknown>).whatsapp;
     const resultado = analisarCatalogo({
-      versao: 1,
-      geradoEm: null,
-      total: 1,
-      profissionais: [incompleto],
+      versao: 1, geradoEm: null, total: 1, profissionais: [incompleto],
     });
     expect(resultado.ok).toBe(false);
     if (!resultado.ok) {
@@ -65,19 +62,15 @@ describe('analisarCatalogo', () => {
   });
 
   it('rejeita WhatsApp fora do formato internacional', () => {
-    const invalido = { ...profissionalExemplo, whatsapp: '11999998888' };
-    const resultado = analisarCatalogo({
-      versao: 1, geradoEm: null, total: 1, profissionais: [invalido],
-    });
-    expect(resultado.ok).toBe(false);
+    const invalido = { ...profissionalExemplo, whatsapp: '21999998888' };
+    expect(analisarCatalogo({ versao: 1, geradoEm: null, total: 1, profissionais: [invalido] }).ok).toBe(false);
   });
 
-  it('rejeita UF inexistente', () => {
-    const invalido = { ...profissionalExemplo, uf: 'XX' };
-    const resultado = analisarCatalogo({
-      versao: 1, geradoEm: null, total: 1, profissionais: [invalido],
-    });
-    expect(resultado.ok).toBe(false);
+  it('rejeita UF inexistente e estado incoerente', () => {
+    const ufErrada = { ...profissionalExemplo, uf: 'XX' as never, estado: 'Lugar' };
+    expect(analisarCatalogo({ versao: 1, geradoEm: null, total: 1, profissionais: [ufErrada] }).ok).toBe(false);
+    const estadoErrado = { ...profissionalExemplo, estado: 'Minas Gerais' };
+    expect(analisarCatalogo({ versao: 1, geradoEm: null, total: 1, profissionais: [estadoErrado] }).ok).toBe(false);
   });
 
   it('rejeita ids duplicados', () => {
@@ -85,7 +78,7 @@ describe('analisarCatalogo', () => {
       versao: 1,
       geradoEm: null,
       total: 2,
-      profissionais: [profissionalExemplo, { ...profissionalExemplo, nome: 'Outra Pessoa' }],
+      profissionais: [profissionalExemplo, { ...profissionalExemplo, nome: 'Outra Pessoa', whatsapp: '5519988887777' }],
     });
     expect(resultado.ok).toBe(false);
     if (!resultado.ok) {
@@ -94,16 +87,12 @@ describe('analisarCatalogo', () => {
   });
 
   it('rejeita total divergente da lista', () => {
-    const resultado = analisarCatalogo({ ...catalogoValido, total: 5 });
-    expect(resultado.ok).toBe(false);
+    expect(analisarCatalogo({ ...catalogoValido, total: 5 }).ok).toBe(false);
   });
 
   it('rejeita datas fora do formato AAAA-MM-DD', () => {
     const invalido = { ...profissionalExemplo, atualizadoEm: '01/10/2026' };
-    const resultado = analisarCatalogo({
-      versao: 1, geradoEm: null, total: 1, profissionais: [invalido],
-    });
-    expect(resultado.ok).toBe(false);
+    expect(analisarCatalogo({ versao: 1, geradoEm: null, total: 1, profissionais: [invalido] }).ok).toBe(false);
   });
 
   it('rejeita entrada que não é objeto', () => {

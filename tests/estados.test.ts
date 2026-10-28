@@ -38,6 +38,12 @@ describe('normalizarUF', () => {
     expect(normalizarUF('Rio de Janeiro')).toBe('RJ');
   });
 
+  it('aceita o formato do formulário: sigla - nome (RJ - Rio de Janeiro)', () => {
+    expect(normalizarUF('RJ - Rio de Janeiro')).toBe('RJ');
+    expect(normalizarUF('sp - São Paulo')).toBe('SP');
+    expect(normalizarUF('DF - Distrito Federal')).toBe('DF');
+  });
+
   it('retorna null para valores inválidos', () => {
     expect(normalizarUF('São Pauloo')).toBeNull();
     expect(normalizarUF('Texas')).toBeNull();

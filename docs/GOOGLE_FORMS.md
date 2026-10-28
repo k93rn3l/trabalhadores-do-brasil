@@ -1,13 +1,23 @@
 # Como configurar o Google Forms de cadastro
 
-Este guia cria o formulário oficial de cadastro de profissionais. Os **títulos das
-perguntas importam**: o sincronizador reconhece os cabeçalhos da planilha por
-nome normalizado (sem acentos, minúsculas). Use os títulos exatos abaixo.
+> **O formulário real já existe e está publicado:**
+> https://forms.gle/uKqyYZkaTpGTpepb7 (Cadastro de Profissionais Autônomos),
+> vinculado à planilha `1nxcIvRTlAf1HTXbNaeq6oo3gOJN8L52hbcL6NGzTk3M`, aba
+> “Respostas ao formulário 1”. Este guia serve como referência para manter os
+> títulos das perguntas compatíveis com o sincronizador (ele identifica as
+> colunas pelo nome normalizado) e para recriar os formulários opcionais.
+
+Os **títulos das perguntas importam**: o sincronizador reconhece os cabeçalhos
+da planilha por nome normalizado (sem acentos, minúsculas, espaços extras
+removidos). Títulos atuais do formulário real: Nome profissional, Categoria,
+Profissão, Descrição do serviço, Estado (UF), Município, Bairros atendidos,
+Outros municípios atendidos, Atendimento remoto, WhatsApp, E-mail
+administrativo, Endereço comercial e Consentimento para publicação.
 
 ## 1. Criar o formulário
 
 1. Acesse [forms.google.com](https://forms.google.com) → **Formulário em branco**;
-2. Renomeie o formulário para **“Cadastro de profissional — Profissionais Progressistas”**;
+2. Renomeie o formulário para **“Cadastro de profissional — Rede Autônoma”**;
 3. Em **Configurações → Respostas**, deixe “Coletar e-mails” **desativado**
    (pediremos o e-mail como pergunta normal, para deixar claro que é administrativo);
 4. Não exija login: em “Restringir aos usuários”, escolha **qualquer pessoa com o link**.
@@ -86,7 +96,7 @@ Na **descrição do formulário** (topo), inclua um texto como:
 ## 4. Vincular ao Google Sheets
 
 1. Aba **Respostas → ícone de planilha (Vincular às respostas)**;
-2. “Criar uma planilha” → nome sugerido: “Cadastros — Profissionais Progressistas”;
+2. “Criar uma planilha” → nome sugerido: “Cadastros — Rede Autônoma”;
 3. Pronto: cada resposta virará uma linha na aba **“Respostas de formulário 1”**.
 
 Continue em **[GOOGLE_SHEETS_E_GOOGLE_CLOUD.md](GOOGLE_SHEETS_E_GOOGLE_CLOUD.md)**

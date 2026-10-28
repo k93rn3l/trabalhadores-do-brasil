@@ -1,66 +1,64 @@
-# GitHub Actions: automação de sincronização e CI
+# GitHub Actions: workflow “Sincronizar profissionais”
 
-Dois workflows vivem em `.github/workflows/`. Nenhum precisa de configuração
-além dos Secrets descritos em [GOOGLE_SHEETS_E_GOOGLE_CLOUD.md](GOOGLE_SHEETS_E_GOOGLE_CLOUD.md).
+Arquivo: `.github/workflows/sincronizar-profissionais.yml`.
 
-## 1. `sync-catalogo.yml` — Sincronizar catálogo
+## Gatilhos
 
-**Gatilhos:**
+- `schedule` — a cada hora (`cron: 0 * * * *`, UTC);
+- `workflow_dispatch` — manual, com entrada **dry_run** (“Simular sem gravar”)
+  que força simulação mesmo com a publicação habilitada.
 
-- `schedule: cron '0 * * * *'` — a cada hora (fuso UTC; 1h = 0h BRB em horário de Brasília);
-- `workflow_dispatch` — botão “Run workflow” para executar na hora.
+## Trava de publicação (segurança da primeira execução)
 
-**Permissões mínimas:** `contents: write` (necessário para o commit dos dados).
-O job é bloqueado em `pull_request`/`pull_request_target` — eventos que nunca
-disparam este workflow, mas o guard impede acesso a segredos em qualquer cenário.
+O job grava o catálogo **somente** quando:
 
-**Etapas do job:**
+1. a execução não é `dry_run`, **e**
+2. a **variável de repositório `HABILITAR_PUBLICACAO`** é exatamente `SIM`.
 
-1. Checkout do código;
-2. Python 3.12 + `pip install -r scripts/requirements.txt`;
-3. **Sincronização** com as variáveis/segredos do repositório
-   (`GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_SHEET_TAB_NAME`);
-4. Validação independente do JSON (`scripts/validar_catalogo.py`);
-5. Node 20 + `npm ci` + **testes do site** + **build de produção**
-   (garante que os novos dados não quebram nada antes do commit);
-6. Verificação de mudança real (`git diff -- public/data`);
-7. Commit `chore(sync): atualizar catálogo público (DATA UTC)` **somente se os
-   dados públicos mudaram** — o sincronizador já evita reescrever quando nada
-   mudou, então não há commits vazios nem loops.
+Antes disso, toda execução é **simulação**: lê a planilha real, valida e
+imprime o resumo (linhas, elegíveis, pendentes, rejeitados e motivos resumidos,
+sem dados pessoais). Nada é gravado nem commitado.
 
-O commit na `main` dispara automaticamente nova publicação no Cloudflare Pages
-(integração Git configurada em [CLOUDFLARE_PAGES.md](CLOUDFLARE_PAGES.md)).
+## Etapas (modo gravação)
 
-### Executar manualmente
+1. Python 3.12 + dependências;
+2. `sync_catalogo.py --publicar` (gera `public/data/profissionais.json`);
+3. Validação independente do JSON (`scripts/validar_catalogo.py`);
+4. Node 20 + `npm ci` + testes do site + **build de produção**;
+5. Verificação de mudança real (`git diff -- public/data`) — sem mudança,
+   sem commit (o sincronizador também preserva `geradoEm` quando o conteúdo
+   público é idêntico);
+6. Commit `chore(sync): atualizar profissionais (…)` e push;
+7. **Deploy Hook do Cloudflare Pages**: se o secret
+   `CLOUDFLARE_DEPLOY_HOOK_URL` existir, faz `POST` após o push e registra o
+   resultado. Ausente → log claro de que a publicação automática dependerá da
+   integração Git do Pages. O log distingue **“deploy solicitado”** de
+   **“deploy concluído”** (acompanhe em Workers & Pages → Deployments).
 
-Aba **Actions → Sincronizar catálogo → Run workflow**. Útil depois de aprovar
-vários cadastros e não querer esperar a hora cheia.
+Permissões mínimas: `contents: write`. Guard contra pull requests (schedule/
+dispatch nunca ocorrem em PR, mas o bloqueio explícito impede acesso a segredos
+em qualquer cenário). `concurrency` impede duas sincronizações simultâneas.
 
-### Se o workflow falhar
+## Nota sobre GITHUB_TOKEN
 
-- Falha de autenticação/planilha: revise o compartilhamento e os Secrets
-  (o catálogo atual permanece publicado — fail-closed);
-- Falha de estrutura: confira os cabeçalhos da planilha;
-- Falha de teste/build: o commit não acontece; veja o log da etapa correspondente.
+Commits criados com `GITHUB_TOKEN` **não disparam** outros workflows do GitHub
+Actions (restrição do próprio GitHub). Por isso o workflow testa e builda tudo
+**antes** do commit, e a publicação no Cloudflare acontece pela integração Git
+do Pages (que observa o push) e/ou pelo Deploy Hook — nunca dependeríamos de um
+segundo workflow acionado pelo commit.
 
-## 2. `ci.yml` — CI de código
+## CI (`ci.yml`)
 
-**Gatilhos:** push na `main` e pull requests.
+Push/PR → testes do site, testes do sincronizador, build e validação do JSON
+commitado. Permissão `contents: read`, sem segredos.
 
-**Permissões:** `contents: read` (somente leitura — sem acesso a segredos).
+## Segredos e variáveis (resumo)
 
-**Etapas:** `npm ci` → Vitest (72 testes) → `astro check` não incluso aqui, rode
-localmente se desejar; build de produção → Python 3.12 → pytest (43 testes) →
-validação do `public/data/catalogo.json` commitado.
-
-## 3. Custos e limites
-
-Ambos os workflows rodam confortavelmente no **free tier** do GitHub Actions
-(2.000 min/mês para contas gratuitas em repositórios privados; ilimitado em
-públicos). A sincronização horária consome ~3–5 min/hora.
-
-## 4. Desativar ou mudar a periodicidade
-
-- Editar o `cron` em `.github/workflows/sync-catalogo.yml`
-  (ex.: `0 */6 * * *` = a cada 6 horas);
-- Para pausar: Actions → Sincronizar catálogo → **⋯ → Disable workflow**.
+| Tipo | Nome | Função |
+|---|---|---|
+| Secret | `GOOGLE_SERVICE_ACCOUNT_JSON` | credencial da conta de serviço |
+| Secret | `PUBLIC_ID_SECRET` | HMAC dos IDs públicos |
+| Secret | `CLOUDFLARE_DEPLOY_HOOK_URL` | Deploy Hook (opcional) |
+| Secret/Var | `GOOGLE_SHEET_ID` | ID da planilha (padrão já no workflow) |
+| Var | `GOOGLE_SHEET_TAB_NAME` | aba (padrão “Respostas ao formulário 1”) |
+| Var | `HABILITAR_PUBLICACAO` | `SIM` libera a gravação |

@@ -39,20 +39,20 @@ const ICONE_WHATSAPP =
  */
 export function cartaoHTML(p: Profissional, mensagemWhatsApp: string): string {
   const urlPerfil = `/profissional/${encodeURIComponent(p.id)}/`;
-  const regioes = p.regioes.slice(0, 3);
-  const sobraRegioes = p.regioes.length - regioes.length;
-  const regioesTexto =
-    escapeHTML(regioes.join(', ')) + (sobraRegioes > 0 ? ` e +${sobraRegioes}` : '');
+  const bairros = p.bairros.slice(0, 3);
+  const sobraBairros = p.bairros.length - bairros.length;
+  const bairrosTexto =
+    escapeHTML(bairros.join(', ')) + (sobraBairros > 0 ? ` e +${sobraBairros}` : '');
 
   return `<article class="cartao">
   <div class="cartao__topo">
     <h3 class="cartao__nome"><a href="${urlPerfil}">${escapeHTML(p.nome)}</a></h3>
     <p class="cartao__profissao">${escapeHTML(p.profissao)}</p>
     <p class="cartao__meta">
-      <span>${escapeHTML(p.municipio)} — ${p.uf}</span>${p.remoto ? '<span class="etiqueta etiqueta--online">Atende online</span>' : ''}
+      <span>${escapeHTML(p.municipio)} — ${p.uf}</span>${p.atendimento_remoto ? '<span class="etiqueta etiqueta--online">Atende online</span>' : ''}
     </p>
   </div>
-  ${regioes.length ? `<p class="cartao__regioes"><strong>Atende:</strong> ${regioesTexto}</p>` : ''}
+  ${bairros.length ? `<p class="cartao__regioes"><strong>Atende:</strong> ${bairrosTexto}</p>` : ''}
   <p class="cartao__descricao">${escapeHTML(truncar(p.descricao, 180))}</p>
   <p class="cartao__categoria"><a class="etiqueta etiqueta--categoria" href="/categoria/${p.categoriaSlug}/">${escapeHTML(p.categoria)}</a></p>
   <div class="cartao__acoes">
