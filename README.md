@@ -1,11 +1,11 @@
-# Rede Autônoma
+# Trabalhadores do Brasil
 
 Plataforma nacional, **gratuita, estática e sem servidor próprio**, para divulgação de
 serviços prestados por profissionais autônomos em todo o Brasil. Visitantes encontram
 prestadores por profissão, categoria, estado, município e região atendida — e entram em
 contato diretamente pelo **WhatsApp**.
 
-> O nome da plataforma (**Rede Autônoma**) está centralizado em
+> O nome da plataforma (**Trabalhadores do Brasil**) está centralizado em
 > `src/config/site.ts`. Trocar o nome exige alterar um único campo.
 
 **Fluxo completo:** profissional preenche o **Google Forms** → respostas caem na

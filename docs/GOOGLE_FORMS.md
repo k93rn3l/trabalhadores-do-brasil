@@ -17,7 +17,7 @@ administrativo, Endereço comercial e Consentimento para publicação.
 ## 1. Criar o formulário
 
 1. Acesse [forms.google.com](https://forms.google.com) → **Formulário em branco**;
-2. Renomeie o formulário para **“Cadastro de profissional — Rede Autônoma”**;
+2. Renomeie o formulário para **“Cadastro de profissional — Trabalhadores do Brasil”**;
 3. Em **Configurações → Respostas**, deixe “Coletar e-mails” **desativado**
    (pediremos o e-mail como pergunta normal, para deixar claro que é administrativo);
 4. Não exija login: em “Restringir aos usuários”, escolha **qualquer pessoa com o link**.
@@ -96,7 +96,7 @@ Na **descrição do formulário** (topo), inclua um texto como:
 ## 4. Vincular ao Google Sheets
 
 1. Aba **Respostas → ícone de planilha (Vincular às respostas)**;
-2. “Criar uma planilha” → nome sugerido: “Cadastros — Rede Autônoma”;
+2. “Criar uma planilha” → nome sugerido: “Cadastros — Trabalhadores do Brasil”;
 3. Pronto: cada resposta virará uma linha na aba **“Respostas de formulário 1”**.
 
 Continue em **[GOOGLE_SHEETS_E_GOOGLE_CLOUD.md](GOOGLE_SHEETS_E_GOOGLE_CLOUD.md)**

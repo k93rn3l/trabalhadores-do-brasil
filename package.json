@@ -1,5 +1,5 @@
 {
-  "name": "catalogo-profissionais",
+  "name": "trabalhadores-do-brasil",
   "version": "1.0.0",
   "description": "Plataforma nacional, gratuita e estática de divulgação de profissionais autônomos, com cadastro via Google Forms, moderação via Google Sheets e publicação no Cloudflare Pages.",
   "private": true,
