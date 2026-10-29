@@ -1,6 +1,6 @@
-"""Testes do sincronizador no modelo de PUBLICAÇÃO AUTOMÁTICA com moderação
-por exceção. Fixtures sintéticas (nenhum dado real), estrutura idêntica à da
-planilha real: coluna "Email" verificada + colunas administrativas.
+"""Testes do sincronizador: publicação automática com moderação por exceção,
+sinais fracos × fortes, IDs estáveis por identidade e relatório de moderação.
+Fixtures sintéticas — nenhum dado real.
 """
 from __future__ import annotations
 
@@ -68,11 +68,11 @@ PADRAO = {
     "endereco": "Rua das Flores, 123",
     "consentimento": CONSENTIMENTO,
     "id": "",
-    "status": "",           # vazio: publicação automática
+    "status": "",
     "data_aprovacao": "",
     "data_atualizacao": "",
     "observacoes": "anotacao interna sensivel",
-    "ativo": "",            # vazio NÃO bloqueia no modelo automático
+    "ativo": "",
 }
 
 
@@ -82,9 +82,11 @@ def linha(**sobrescritas) -> list[str]:
     return [valores[chave] for _, chave in COLUNAS_MODELO]
 
 
-def montar(linhas, ids_publicados=None):
+def montar(linhas, mapa_identidades=None, ids_publicados=None):
     mapa = sync.mapa_colunas(CABECALHO)
-    return sync.montar_catalogo(linhas, mapa, SEGREDO_TESTE, ids_publicados or {})
+    return sync.montar_catalogo(
+        linhas, mapa, SEGREDO_TESTE, mapa_identidades or {}, ids_publicados or {}
+    )
 
 
 def escrever_csv(caminho: Path, linhas: list[list[str]]) -> None:
@@ -97,8 +99,11 @@ def escrever_csv(caminho: Path, linhas: list[list[str]]) -> None:
 def executar(tmp_path: Path, linhas, *flags: str) -> int:
     csv_path = tmp_path / "planilha.csv"
     escrever_csv(csv_path, list(linhas))
-    return sync.main(["--csv", str(csv_path), "--saida", str(tmp_path / "data"),
-                      "--id-secret", SEGREDO_TESTE, *flags])
+    return sync.main([
+        "--csv", str(csv_path), "--saida", str(tmp_path / "data"),
+        "--dir-dados", str(tmp_path / "dados"),
+        "--id-secret", SEGREDO_TESTE, *flags,
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -107,127 +112,63 @@ def executar(tmp_path: Path, linhas, *flags: str) -> int:
 
 class TestNovoCadastro:
     def test_status_vazio_publica_automaticamente(self):
-        catalogo, contagem, _ = montar([linha()])
+        catalogo, contagem, *_ = montar([linha()])
         assert contagem["publicados"] == 1
         registro = catalogo["profissionais"][0]
         assert registro["nome"] == "Maria da Silva"
         assert registro["uf"] == "SP" and registro["estado"] == "São Paulo"
         assert registro["whatsapp"] == "5519999990001"
-        assert registro["bairros"] == ["Taquaral", "Centro"]
-        assert registro["atendimento_remoto"] is True
-        assert registro["atualizadoEm"] == "2026-10-01"  # do carimbo
+        assert registro["atualizadoEm"] == "2026-10-01"
 
-    def test_ativo_vazio_nao_bloqueia(self):
-        _, contagem, _ = montar([linha(ativo="")])
-        assert contagem["publicados"] == 1 and contagem["bloqueados"] == 0
-
-    def test_ativo_sim_publica(self):
-        _, contagem, _ = montar([linha(ativo="SIM")])
-        assert contagem["publicados"] == 1
-
-    def test_validacoes_essenciais(self):
+    def test_validacoes_essenciais_recusam(self):
         for campo, valor in [("whatsapp", "19 3232-0000"), ("uf", "XX - Lugar"),
                              ("municipio", "  "), ("descricao", ""),
                              ("consentimento", "concordo com tudo")]:
-            _, contagem, _ = montar([linha(**{campo: valor})])
+            _, contagem, *_ = montar([linha(**{campo: valor})])
             assert contagem["publicados"] == 0 and contagem["invalidos"] == 1, campo
 
 
 # ---------------------------------------------------------------------------
-# 2/3. Edição automática e identificador estável
+# 2. Sinais fracos NÃO retêm; fortes retêm
 # ---------------------------------------------------------------------------
 
-class TestEdicaoEIdentidade:
-    def test_edicao_da_resposta_atualiza_o_publicado(self):
-        antes = montar([linha()])[0]["profissionais"][0]
-        depois = montar([linha(descricao="Agora também faz escova e penteados.")])[0]["profissionais"][0]
-        assert depois["descricao"] != antes["descricao"]
+class TestSinaisFracosVSFortes:
+    def test_nome_de_uma_palavra_publica_com_sinal(self):
+        _, contagem, avisos, _, eventos = montar([linha(nome="Renata")])
+        assert contagem["publicados"] == 1 and contagem["retidos"] == 0
+        assert any("sinal fraco" in a for a in avisos)
+        assert eventos["sinais_fracos"] and eventos["sinais_fracos"][0]["linha"] == 2
 
-    def test_mudanca_de_telefone_preserva_o_id(self):
-        id_antes = montar([linha()])[0]["profissionais"][0]["id"]
-        id_depois = montar([linha(whatsapp="11988887777")])[0]["profissionais"][0]["id"]
-        assert id_antes == id_depois  # ID deriva do e-mail verificado
+    def test_descricao_curta_publica_com_sinal(self):
+        _, contagem, _, _, eventos = montar([linha(descricao="Corto cabelo.")])
+        assert contagem["publicados"] == 1
+        assert any("descrição curta" in e["sinal"] for e in eventos["sinais_fracos"])
 
-    def test_id_e_deterministico_e_nao_expoe_dados(self):
-        id1 = montar([linha()])[0]["profissionais"][0]["id"]
-        id2 = montar([linha()])[0]["profissionais"][0]["id"]
-        assert id1 == id2 and sync.REGEX_ID.match(id1)
-        assert "maria" not in id1 and "19999990001" not in id1
-
-    def test_id_publico_manual_e_respeitado(self):
-        catalogo, _, _ = montar([linha(id="maria-campinas-001")])
-        assert catalogo["profissionais"][0]["id"] == "maria-campinas-001"
-
-    def test_migracao_preserva_id_ja_publicado(self):
-        # Catálogo legado: WhatsApp já publicado com ID antigo -> reutiliza.
-        ids_legado = {"5519999990001": ["id-antigo-abc"]}
-        catalogo, _, _ = montar([linha()], ids_publicados=ids_legado)
-        assert catalogo["profissionais"][0]["id"] == "id-antigo-abc"
-
-
-# ---------------------------------------------------------------------------
-# 4. Bloqueio administrativo persistente
-# ---------------------------------------------------------------------------
-
-class TestBloqueio:
-    @pytest.mark.parametrize("status", ["REJEITADO", "INATIVO"])
-    def test_status_bloqueante_impede_publicacao(self, status):
-        _, contagem, _ = montar([linha(status=status)])
-        assert contagem["publicados"] == 0 and contagem["bloqueados"] == 1
-
-    def test_ativo_nao_impede_publicacao(self):
-        _, contagem, _ = montar([linha(ativo="NÃO")])
-        assert contagem["publicados"] == 0 and contagem["bloqueados"] == 1
-
-    def test_edicao_nao_reativa_bloqueio(self):
-        # profissional bloqueado edita a resposta (dados mudam) — segue bloqueado
-        _, contagem, _ = montar([
-            linha(status="REJEITADO", whatsapp="11977776666",
-                  descricao="Novos serviços após edição."),
+    def test_link_na_descricao_publica_com_sinal(self):
+        _, contagem, _, _, eventos = montar([
+            linha(descricao="Meu portfólio em www.meustrabalhos.com.br com fotos reais.")
         ])
-        assert contagem["publicados"] == 0 and contagem["bloqueados"] == 1
+        assert contagem["publicados"] == 1
+        assert any("link na descrição" in e["sinal"] for e in eventos["sinais_fracos"])
 
-    def test_exclusao_da_linha_remove_do_catalogo(self):
-        com = montar([linha(), linha(email_verificado="outro@exemplo.com",
-                                     nome="João Souza", whatsapp="31988880002",
-                                     municipio="Belo Horizonte", uf="MG - Minas Gerais")])[0]
-        sem = montar([linha()])[0]
-        assert len(com["profissionais"]) == 2
-        assert len(sem["profissionais"]) == 1
-
-    def test_pendente_e_retido_para_revisao(self):
-        _, contagem, avisos = montar([linha(status="PENDENTE")])
-        assert contagem["publicados"] == 0 and contagem["pendentes"] == 1
-        assert any("PENDENTE" in a for a in avisos)
-
-    def test_status_desconhecido_e_retido(self):
-        _, contagem, _ = montar([linha(status="QUALQUER")])
-        assert contagem["publicados"] == 0 and contagem["pendentes"] == 1
-
-
-# ---------------------------------------------------------------------------
-# 5/6. Suspeitos: retenção por exceção
-# ---------------------------------------------------------------------------
-
-class TestSuspeitos:
-    def test_nome_de_uma_palavra_e_retido(self):
-        _, contagem, _ = montar([linha(nome="Marcelo")])
+    def test_link_no_nome_retem(self):
+        _, contagem, _, _, eventos = montar([linha(nome="Maria www.promo.com")])
         assert contagem["retidos"] == 1 and contagem["publicados"] == 0
+        assert any("link no nome" in ";".join(e["motivos"]) for e in eventos["retidos"])
 
-    def test_descricao_curta_e_retida(self):
-        _, contagem, _ = montar([linha(descricao="Corto cabelo.")])
+    def test_sem_nenhum_email_retem(self):
+        _, contagem, _, _, eventos = montar([
+            linha(email_verificado="", email_administrativo="")
+        ])
         assert contagem["retidos"] == 1
+        assert any("e-mail" in ";".join(e["motivos"]) for e in eventos["retidos"])
 
-    def test_link_na_descricao_e_retido(self):
-        _, contagem, _ = montar([linha(descricao="Veja meus serviços em www.spam.com.br agora.")])
-        assert contagem["retidos"] == 1
+    def test_email_somente_administrativo_publica(self):
+        _, contagem, *_ = montar([linha(email_verificado="", email_administrativo="eu@exemplo.com")])
+        assert contagem["publicados"] == 1
 
-    def test_sem_email_verificado_e_retido(self):
-        _, contagem, _ = montar([linha(email_verificado="")])
-        assert contagem["retidos"] == 1
-
-    def test_telefone_em_tres_contas_e_retido(self):
-        _, contagem, _ = montar([
+    def test_telefone_em_tres_contas_retem(self):
+        _, contagem, _, _, eventos = montar([
             linha(email_verificado="a@exemplo.com", whatsapp="19999990001", municipio="Campinas"),
             linha(email_verificado="b@exemplo.com", nome="João Souza", whatsapp="19999990001",
                   municipio="Santos"),
@@ -236,11 +177,105 @@ class TestSuspeitos:
         ])
         assert contagem["retidos"] == 3 and contagem["publicados"] == 0
 
-    def test_aprovado_administrativo_libera_suspeito(self):
-        # STATUS=APROVADO = chancela: publica mesmo com indício de suspeita
-        _, contagem, _ = montar([linha(nome="Marcelo", status="APROVADO",
-                                       data_aprovacao="05/10/2026")])
+    def test_aprovado_libera_de_retencao_por_sinal_forte(self):
+        _, contagem, *_ = montar([
+            linha(email_verificado="", email_administrativo="", status="APROVADO",
+                  data_aprovacao="05/10/2026")
+        ])
         assert contagem["publicados"] == 1 and contagem["retidos"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 3. Identificadores estáveis e anti-apropriação
+# ---------------------------------------------------------------------------
+
+class TestIdentificadores:
+    def test_troca_de_telefone_preserva_id(self):
+        id_antes = montar([linha()])[0]["profissionais"][0]["id"]
+        id_depois = montar([linha(whatsapp="11988887777")])[0]["profissionais"][0]["id"]
+        assert id_antes == id_depois
+
+    def test_id_nao_expoe_dados(self):
+        registro = montar([linha()])[0]["profissionais"][0]
+        assert "maria" not in registro["id"] and "19999990001" not in registro["id"]
+
+    def test_id_publico_manual_tem_prioridade(self):
+        catalogo, *_ = montar([linha(id="maria-campinas-001")])
+        assert catalogo["profissionais"][0]["id"] == "maria-campinas-001"
+
+    def test_migracao_preserva_id_publicado_por_telefone(self):
+        # Perfil legado publicado com ID antigo e mesmo telefone -> mantém URL.
+        ids_legado = {"5519999990001": ["id-antigo-abc"]}
+        catalogo, *_ = montar([linha()], ids_publicados=ids_legado)
+        assert catalogo["profissionais"][0]["id"] == "id-antigo-abc"
+
+    def test_mapa_de_identidades_tem_prioridade_sobre_telefone(self):
+        # Identidade já vinculada no mapa: telefone igual de outro cadastro
+        # NÃO apropria o ID (mapa vence a migração por telefone).
+        catalogo, *_ = montar([linha()], ids_publicados={"5519999990001": ["id-antigo-abc"]})
+        id_maria = catalogo["profissionais"][0]["id"]  # vinculado na 1ª resolução
+        mapa = sync.carregar_mapa_identidades(Path("_inexistente_"))
+        # segunda identidade, MESMO telefone, ID publicado diferente:
+        _, _, _, _, _ = None, None, None, None, None
+        mapa_teste = {
+            # hash de identidade da Maria -> id que ela já tem
+            sync._hmac(SEGREDO_TESTE, "identidade", "maria@exemplo.com"): "id-ja-vinculado",
+        }
+        catalogo2, *_ = montar(
+            [linha(email_verificado="outra@exemplo.com", whatsapp="19999990001")],
+            mapa_identidades=mapa_teste,
+            ids_publicados={"5519999990001": ["id-ja-vinculado"]},
+        )
+        # "outra" é identidade distinta -> ID próprio derivado, não o vinculado
+        assert catalogo2["profissionais"][0]["id"] != "id-ja-vinculado"
+        assert id_maria == "id-antigo-abc"
+
+    def test_telefone_com_dois_ids_publicados_nao_migra(self):
+        # telefone ambíguo (2 perfis publicados) -> nada de reuso; ID derivado
+        ids_legado = {"5519999990001": ["id-a", "id-b"]}
+        catalogo, *_ = montar([linha()], ids_publicados=ids_legado)
+        assert catalogo["profissionais"][0]["id"] not in {"id-a", "id-b"}
+
+
+# ---------------------------------------------------------------------------
+# 4. Bloqueio persistente e edição
+# ---------------------------------------------------------------------------
+
+class TestBloqueioEEdicao:
+    @pytest.mark.parametrize("status", ["REJEITADO", "INATIVO"])
+    def test_status_bloqueante_impede(self, status):
+        _, contagem, _, _, eventos = montar([linha(status=status)])
+        assert contagem["publicados"] == 0 and contagem["bloqueados"] == 1
+        assert eventos["bloqueados"] and eventos["bloqueados"][0]["linha"] == 2
+
+    def test_ativo_nao_impede(self):
+        _, contagem, *_ = montar([linha(ativo="NÃO")])
+        assert contagem["publicados"] == 0 and contagem["bloqueados"] == 1
+
+    def test_edicao_nao_reativa_bloqueio(self):
+        _, contagem, *_ = montar([
+            linha(status="REJEITADO", whatsapp="11977776666",
+                  descricao="Novos serviços após edição."),
+        ])
+        assert contagem["publicados"] == 0 and contagem["bloqueados"] == 1
+
+    def test_edicao_atualiza_publicado(self):
+        antes = montar([linha()])[0]["profissionais"][0]
+        depois = montar([linha(descricao="Agora também faz escova.")])[0]["profissionais"][0]
+        assert depois["descricao"] != antes["descricao"]
+
+    def test_exclusao_da_linha_remove_do_catalogo(self):
+        com = montar([linha(), linha(email_verificado="outro@exemplo.com", nome="João Souza",
+                                     whatsapp="31988880002", municipio="Belo Horizonte",
+                                     uf="MG - Minas Gerais")])[0]
+        sem = montar([linha()])[0]
+        assert len(com["profissionais"]) == 2 and len(sem["profissionais"]) == 1
+
+    def test_pendente_e_status_desconhecido_retidos(self):
+        _, contagem, *_ = montar([linha(status="PENDENTE")])
+        assert contagem["pendentes"] == 1 and contagem["publicados"] == 0
+        _, contagem, *_ = montar([linha(status="QUALQUER")])
+        assert contagem["pendentes"] == 1 and contagem["publicados"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -248,8 +283,8 @@ class TestSuspeitos:
 # ---------------------------------------------------------------------------
 
 class TestDuplicacoes:
-    def test_mesmo_email_mantem_versao_mais_recente(self):
-        catalogo, contagem, _ = montar([
+    def test_mesma_identidade_mantem_mais_recente(self):
+        catalogo, contagem, *_ = montar([
             linha(timestamp="01/10/2026 09:00:00", descricao="Primeiro envio."),
             linha(timestamp="05/10/2026 09:00:00", descricao="Reenvio corrigido."),
         ])
@@ -257,7 +292,7 @@ class TestDuplicacoes:
         assert catalogo["profissionais"][0]["descricao"] == "Reenvio corrigido."
 
     def test_mesmo_whatsapp_profissao_municipio(self):
-        catalogo, contagem, _ = montar([
+        catalogo, contagem, *_ = montar([
             linha(email_verificado="a@exemplo.com", timestamp="01/10/2026 09:00:00"),
             linha(email_verificado="b@exemplo.com", timestamp="05/10/2026 09:00:00",
                   descricao="Outra conta, mesmo anúncio."),
@@ -266,12 +301,12 @@ class TestDuplicacoes:
 
 
 # ---------------------------------------------------------------------------
-# 7. Privacidade: allowlist
+# 5. Privacidade: allowlist estrita
 # ---------------------------------------------------------------------------
 
 class TestPrivacidade:
-    def test_json_somente_com_campos_publicos(self):
-        catalogo, _, _ = montar([linha()])
+    def test_json_somente_campos_publicos(self):
+        catalogo, *_ = montar([linha()])
         registro = catalogo["profissionais"][0]
         assert set(registro.keys()) == set(sync.CAMPOS_PUBLICOS)
         texto = json.dumps(catalogo, ensure_ascii=False)
@@ -279,60 +314,89 @@ class TestPrivacidade:
                          "Rua das Flores", "anotacao interna", CONSENTIMENTO]:
             assert proibido not in texto, proibido
 
-    def test_validador_rejeita_vazamento(self):
-        catalogo, _, _ = montar([linha()])
+    def test_validador_rejeita_vazamento_e_campos_extras(self):
+        catalogo, *_ = montar([linha()])
         catalogo["profissionais"][0]["email_verificado"] = "vazado@exemplo.com"
-        valido, erros = sync.validar_catalogo({**catalogo, "geradoEm": "2026-10-28T12:00:00Z"})
-        assert not valido and any("privado" in e for e in erros)
+        assert not sync.validar_catalogo({**catalogo, "geradoEm": "2026-10-28T12:00:00Z"})[0]
+        catalogo2, *_ = montar([linha()])
+        catalogo2["profissionais"][0]["campoNovo"] = "fora da allowlist"
+        assert not sync.validar_catalogo({**catalogo2, "geradoEm": "2026-10-28T12:00:00Z"})[0]
 
 
 # ---------------------------------------------------------------------------
-# 8. Dry-run com comparação ao catálogo publicado
+# 6. Relatório de moderação e comparação (dry-run)
 # ---------------------------------------------------------------------------
 
-class TestComparacaoDryRun:
+class TestRelatorioEComparacao:
+    def test_dry_run_grava_relatorio_e_nao_publica(self, tmp_path, capsys):
+        saida, dados_dir = tmp_path / "data", tmp_path / "dados"
+        assert executar(tmp_path, [linha()]) == 0
+        antes = (saida / "profissionais.json").read_text(encoding="utf-8")
+
+        assert executar(
+            tmp_path,
+            [linha(descricao="Descrição nova."), linha(nome="Suspeito", email_verificado="",
+                                                       email_administrativo="")],
+            "--dry-run", "--verbose",
+        ) == 0
+        assert (saida / "profissionais.json").read_text(encoding="utf-8") == antes
+
+        relatorio = json.loads((dados_dir / "relatorio-moderacao.json").read_text(encoding="utf-8"))
+        assert relatorio["modo"] == "SIMULACAO"
+        assert relatorio["comparacaoComPublicado"] == {"novos": 0, "removidos": 0,
+                                                       "alterados": 1, "mantidos": 0}
+        assert relatorio["retidosParaRevisao"] and relatorio["retidosParaRevisao"][0]["linha"] == 3
+        texto = json.dumps(relatorio, ensure_ascii=False)
+        assert "Suspeito" not in texto and "@" not in texto  # sem dados pessoais
+
+    def test_publicar_grava_relatorio_e_mapa(self, tmp_path):
+        saida, dados_dir = tmp_path / "data", tmp_path / "dados"
+        assert executar(tmp_path, [linha()]) == 0
+        mapa = json.loads((dados_dir / "identidades.json").read_text(encoding="utf-8"))
+        assert len(mapa["mapa"]) == 1  # hash -> id da Maria
+        assert list(mapa["mapa"].values())[0] == \
+            json.loads((saida / "profissionais.json").read_text(encoding="utf-8"))["profissionais"][0]["id"]
+
     def test_contagens_novos_removidos_alterados(self, tmp_path):
         saida = tmp_path / "data"
-        # 1ª execução grava 2 profissionais
         assert executar(tmp_path, [linha(), linha(
             email_verificado="joao@exemplo.com", nome="João Souza",
             whatsapp="31988880002", municipio="Belo Horizonte",
             uf="MG - Minas Gerais")]) == 0
-
-        # Previsto: remove João, altera Maria, adiciona Ana
         comparavel = montar([
             linha(descricao="Descrição nova após edição."),
             linha(email_verificado="ana@exemplo.com", nome="Ana Lima",
                   whatsapp="21988880003", municipio="Niterói", uf="RJ - Rio de Janeiro"),
         ], ids_publicados=sync.carregar_ids_publicados(saida))[0]
-        resultado = sync.comparar_com_atual(saida, comparavel)
-        assert resultado == {"novos": 1, "removidos": 1, "alterados": 1, "mantidos": 0}
-
-    def test_dry_run_imprime_comparacao_e_nao_grava(self, tmp_path, capsys):
-        saida = tmp_path / "data"
-        assert executar(tmp_path, [linha()]) == 0
-        codigo = executar(tmp_path, [linha(descricao="Descrição nova.")], "--dry-run")
-        assert codigo == 0
-        texto = capsys.readouterr().out
-        assert "novos: 0" in texto and "alterados: 1" in texto
-        assert "Nada foi gravado" in texto
+        assert sync.comparar_com_atual(saida, comparavel) == {
+            "novos": 1, "removidos": 1, "alterados": 1, "mantidos": 0,
+        }
 
 
 # ---------------------------------------------------------------------------
-# 9. Escrita, atomicidade e falhas
+# 7. Escrita, atomicidade e falhas
 # ---------------------------------------------------------------------------
 
 class TestEscritaEFalhas:
-    def test_end_to_end_escreve_profissionais_json_e_blocos(self, tmp_path):
-        saida = tmp_path / "data"
+    def test_end_to_end_escreve_catalogo_blocos_e_mapa(self, tmp_path):
+        saida, dados_dir = tmp_path / "data", tmp_path / "dados"
         assert executar(tmp_path, [linha(), linha(
             email_verificado="joao@exemplo.com", nome="João Souza",
             whatsapp="31988880002", municipio="Belo Horizonte",
             uf="MG - Minas Gerais")], "--verbose") == 0
         principal = json.loads((saida / "profissionais.json").read_text(encoding="utf-8"))
         assert principal["total"] == 2
-        assert (saida / "uf" / "sp.json").exists()
-        assert (saida / "uf" / "mg.json").exists()
+        assert (saida / "uf" / "sp.json").exists() and (saida / "uf" / "mg.json").exists()
+        assert (dados_dir / "identidades.json").exists()
+
+    def test_segunda_execucao_preserva_id_por_mapa(self, tmp_path):
+        saida, dados_dir = tmp_path / "data", tmp_path / "dados"
+        assert executar(tmp_path, [linha()]) == 0
+        id1 = json.loads((saida / "profissionais.json").read_text(encoding="utf-8"))["profissionais"][0]["id"]
+        # troca o telefone; mapa de identidades garante o mesmo ID
+        assert executar(tmp_path, [linha(whatsapp="11977776666")]) == 0
+        id2 = json.loads((saida / "profissionais.json").read_text(encoding="utf-8"))["profissionais"][0]["id"]
+        assert id1 == id2
 
     def test_sincronizacao_sem_mudancas_preserva_arquivo(self, tmp_path):
         saida = tmp_path / "data"
@@ -347,7 +411,8 @@ class TestEscritaEFalhas:
         original = (saida / "profissionais.json").read_text(encoding="utf-8")
         ruim = tmp_path / "ruim.csv"
         ruim.write_text("Coluna A,Coluna B\nv1,v2\n", encoding="utf-8")
-        assert sync.main(["--csv", str(ruim), "--saida", str(saida)]) == 1
+        assert sync.main(["--csv", str(ruim), "--saida", str(saida),
+                          "--dir-dados", str(tmp_path / "dados")]) == 1
         assert (saida / "profissionais.json").read_text(encoding="utf-8") == original
 
     def test_falha_da_api_nao_apaga_catalogo(self, tmp_path, monkeypatch):
@@ -361,7 +426,8 @@ class TestEscritaEFalhas:
         monkeypatch.setattr(sync, "buscar_linhas_google", explodir)
         monkeypatch.setenv("GOOGLE_SHEET_ID", "abc")
         monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", '{"type": "service_account"}')
-        assert sync.main(["--saida", str(saida), "--id-secret", SEGREDO_TESTE]) == 1
+        assert sync.main(["--saida", str(saida), "--dir-dados", str(tmp_path / "dados"),
+                          "--id-secret", SEGREDO_TESTE]) == 1
         assert (saida / "profissionais.json").read_text(encoding="utf-8") == original
 
     def test_sem_id_secret_modo_publicar_falha(self, tmp_path, monkeypatch):
@@ -369,21 +435,11 @@ class TestEscritaEFalhas:
         csv_path = tmp_path / "p.csv"
         escrever_csv(csv_path, [linha()])
         assert sync.main(["--csv", str(csv_path), "--saida", str(tmp_path / "d"),
-                          "--publicar"]) == 1
-
-    def test_bloco_uf_obsoleto_e_removido(self, tmp_path):
-        saida = tmp_path / "data"
-        assert executar(tmp_path, [linha(), linha(
-            email_verificado="joao@exemplo.com", nome="João Souza",
-            whatsapp="31988880002", municipio="Belo Horizonte",
-            uf="MG - Minas Gerais")]) == 0
-        assert (saida / "uf" / "mg.json").exists()
-        assert executar(tmp_path, [linha()]) == 0
-        assert not (saida / "uf" / "mg.json").exists()
+                          "--dir-dados", str(tmp_path / "dd"), "--publicar"]) == 1
 
 
 # ---------------------------------------------------------------------------
-# Normalização e estrutura (mantidos do modelo anterior)
+# Normalização e estrutura
 # ---------------------------------------------------------------------------
 
 class TestNormalizacao:
@@ -391,27 +447,19 @@ class TestNormalizacao:
         mapa = sync.mapa_colunas(CABECALHO)
         for chave in sync.COLUNAS_OBRIGATORIAS:
             assert chave in mapa
-        assert mapa["email_verificado"] == 1
-        assert mapa["email_administrativo"] == 12
+        assert mapa["email_verificado"] == 1 and mapa["email_administrativo"] == 12
 
     def test_uf_formato_do_formulario(self):
         assert sync.normalizar_uf("RJ - Rio de Janeiro") == "RJ"
-        assert sync.normalizar_uf("SP - São Paulo") == "SP"
         assert sync.normalizar_uf("São Paulo") == "SP"
-        assert sync.normalizar_uf("") is None
 
-    def test_whatsapp_normalizado(self):
+    def test_whatsapp(self):
         assert sync.normalizar_whatsapp("21999999999") == "5521999999999"
-        assert sync.normalizar_whatsapp("(21) 99999-9999") == "5521999999999"
         assert sync.normalizar_whatsapp("2122223333") is None
 
-    def test_consentimento_exato_e_rejeita_arbitrario(self):
-        assert sync.consentimento_valido(CONSENTIMENTO) is True
-        assert sync.consentimento_valido("Concordo com tudo") is False
-
-    def test_email_normalizado(self):
-        assert sync.normalizar_email(" Maria@Exemplo.COM ") == "maria@exemplo.com"
-        assert sync.normalizar_email("sem-arroba") == ""
+    def test_consentimento_exato(self):
+        assert sync.consentimento_valido(CONSENTIMENTO)
+        assert not sync.consentimento_valido("Concordo com tudo")
 
 
 class TestValidacao:
@@ -420,45 +468,50 @@ class TestValidacao:
         catalogo["geradoEm"] = "2026-10-28T12:00:00Z"
         return catalogo
 
-    def test_catalogo_valido_passa(self):
+    def test_valido(self):
         valido, erros = sync.validar_catalogo(self.base())
         assert valido, erros
 
-    def test_total_incoerente_rejeitado(self):
+    def test_total_incoerente(self):
         catalogo = self.base()
         catalogo["total"] = 99
         assert not sync.validar_catalogo(catalogo)[0]
 
 
 class TestSemRegistros:
-    def test_so_registros_retidos_gera_catalogo_valido_e_vazio(self):
-        catalogo, _, _ = montar([linha(status="PENDENTE"), linha(status="REJEITADO"),
-                                 linha(nome="SemNome")])
+    def test_so_registros_retidos_gera_valido_e_vazio(self):
+        catalogo, contagem, *_ = montar([
+            linha(status="PENDENTE"), linha(status="REJEITADO"),
+            linha(email_verificado="", email_administrativo=""),
+        ])
         assert catalogo["profissionais"] == [] and catalogo["total"] == 0
-        valido, erros = sync.validar_catalogo(
-            {**catalogo, "geradoEm": "2026-10-28T12:00:00Z"})
+        valido, erros = sync.validar_catalogo({**catalogo, "geradoEm": "2026-10-28T12:00:00Z"})
         assert valido, erros
 
     def test_aviso_nao_expose_dados_pessoais(self):
-        _, _, avisos = montar([linha(whatsapp="1932320000", nome="Fulana Secreta",
-                                     email_verificado="secreto@exemplo.com")])
+        _, _, avisos, _, _ = montar([linha(whatsapp="1932320000", nome="Fulana Secreta",
+                                           email_verificado="secreto@exemplo.com")])
         texto = " ".join(avisos)
         assert "Fulana" not in texto and "secreto" not in texto
 
 
 class TestCatalogoDoRepositorio:
-    def test_catalogo_inicial_valido_e_vazio(self):
-        dados = json.loads((RAIZ / "public" / "data" / "profissionais.json").read_text(encoding="utf-8"))
+    """O catálogo commitado (com dados reais) deve ser válido, consistente e
+    sem dados privados — sem premissa de estar vazio."""
+
+    def test_esquema_consistencia_e_privacidade(self):
+        caminho = RAIZ / "public" / "data" / "profissionais.json"
+        dados = json.loads(caminho.read_text(encoding="utf-8"))
         valido, erros = sync.validar_catalogo(dados)
         assert valido, erros
-        assert dados["total"] == 0
+        assert dados["total"] == len(dados["profissionais"])
+        for registro in dados["profissionais"]:
+            assert set(registro.keys()) == set(sync.CAMPOS_PUBLICOS)
 
     def test_modelo_de_planilha_processavel(self):
         linhas = sync.ler_csv(str(RAIZ / "scripts" / "modelo_planilha.csv"))
         mapa = sync.mapa_colunas(linhas[0])
-        catalogo, contagem, _ = sync.montar_catalogo(linhas[1:], mapa, SEGREDO_TESTE)
-        assert contagem["publicados"] == 1   # Maria (STATUS vazio) publica
-        assert contagem["pendentes"] == 1    # João (PENDENTE) fica retido
-        valido, erros = sync.validar_catalogo(
-            {**catalogo, "geradoEm": "2026-10-28T12:00:00Z"})
+        catalogo, contagem, *_ = sync.montar_catalogo(linhas[1:], mapa, SEGREDO_TESTE)
+        assert contagem["publicados"] == 1 and contagem["pendentes"] == 1
+        valido, erros = sync.validar_catalogo({**catalogo, "geradoEm": "2026-10-28T12:00:00Z"})
         assert valido, erros

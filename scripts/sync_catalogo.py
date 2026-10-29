@@ -5,24 +5,29 @@ Sincronizador: Google Sheets (privado) -> catálogo público JSON.
 Modelo: **publicação automática com moderação por exceção**.
 
 Identidade administrativa: e-mail verificado coletado pelo Google Forms
-(uma resposta por conta Google). O e-mail nunca é publicado; é usado para
-derivar o identificador público estável (HMAC) e para deduplicação.
+(uma resposta por conta). O e-mail nunca é publicado. Dele deriva um hash
+pseudonimizado (HMAC) usado para vincular IDs públicos estáveis — trocar o
+telefone não muda a URL do perfil, e outro cadastro não consegue se apropriar
+de um ID alheio (o vínculo é por identidade, não por telefone).
 
-Regras:
+Decisão por linha:
   - STATUS vazio ........ publica automaticamente (dados válidos + consentimento)
-  - STATUS=APROVADO ..... publica e LIBERA da fila de suspeitos (chancela admin)
+  - STATUS=APROVADO ..... publica e LIBERA de retenção por suspeita (chancela admin)
   - STATUS=PENDENTE ..... retido para revisão manual
-  - STATUS=REJEITADO/INATIVO ou ATIVO=NÃO .... BLOQUEADO (edição do Forms não
-    reativa: as colunas administrativas não são sobrescritas pela edição)
-  - STATUS desconhecido . retido (tratado como PENDENTE)
+  - STATUS=REJEITADO/INATIVO ou ATIVO=NÃO .... BLOQUEADO de forma persistente
+    (a edição da resposta no Forms não reativa: colunas administrativas permanecem)
 
-Suspeitos (retidos sem aprovação individual, liberados apenas com
-STATUS=APROVADO): sem e-mail verificado; nome de uma palavra; descrição
-muito curta; links em nome/descrição; telefone compartilhado por 3+ contas.
+Moderação por exceção — sinais FORTES retêm automaticamente (indício real de
+abuso); sinais FRACOS apenas sinalizam (não retêm profissionais legítimos):
+  fortes : sem nenhum e-mail utilizável; link no nome; telefone em 3+ contas.
+  fracos : nome de uma palavra; descrição curta; link na descrição.
 
-Modos: --csv (local), --publicar (grava), --dry-run (compara com o catálogo
-publicado e mostra novos/removidos/alterados/retidos sem gravar). Sem
---publicar no modo Google, apenas simula (trava de produção).
+Relatório de moderação: `dados/relatorio-moderacao.json` (sem dados pessoais —
+apenas linha, motivo e contagens) gerado em toda execução, para consulta da
+fila de retidos/bloqueios sem backend e sem permissão de escrita na planilha.
+
+Mapa de identidades: `dados/identidades.json` (hash->id; pseudonimizado),
+versionado junto com o catálogo para garantir IDs estáveis entre execuções.
 """
 
 from __future__ import annotations
@@ -49,9 +54,8 @@ CONSENTIMENTO_ESPERADO = (
     "a divulgacao publica dos dados profissionais indicados"
 )
 
-# Retenção por suspeita
-TAMANHO_MINIMO_DESCRICAO = 15
-TELEFONE_COMPARTILHADO_LIMITE = 3
+TELEFONE_COMPARTILHADO_LIMITE = 3      # sinal FORTE
+TAMANHO_DESCRICAO_FRACA = 15           # sinal FRACO (não retém)
 
 UFS = {
     "AC": "Acre", "AL": "Alagoas", "AP": "Amapá", "AM": "Amazonas", "BA": "Bahia",
@@ -74,7 +78,7 @@ CAMPOS_PUBLICOS = (
 # Chaves que JAMAIS podem aparecer em um registro público.
 CHAVES_PROIBIDAS = {
     "email", "emails", "emailVerificado", "email_verificado",
-    "emailAdministrativo", "email_administrativo", "emailAdministrativoTexto",
+    "emailAdministrativo", "email_administrativo",
     "endereco", "enderecoComercial", "endereco_comercial",
     "observacoes", "observacoesInternas", "observacoes_internas",
     "status", "ativo", "consentimento", "consentimento_para_publicacao",
@@ -88,7 +92,6 @@ REGEX_DATA = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 REGEX_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 REGEX_LINK = re.compile(r"(https?://|www\.)", re.IGNORECASE)
 
-# Cabeçalhos da planilha -> chaves internas (nome normalizado, sem posição).
 COLUNAS: dict[str, tuple[str, ...]] = {
     "timestamp": ("timestamp", "carimbo de data/hora", "carimbo de data hora",
                   "data de envio", "data"),
@@ -157,6 +160,12 @@ def limpar_celula(valor: Any) -> str:
 def normalizar_email(valor: str) -> str:
     email = limpar_celula(valor).lower()
     return email if REGEX_EMAIL.match(email) else ""
+
+
+def identidade_email(dados: dict[str, str]) -> str:
+    """E-mail usado como identidade: o verificado; senão, o administrativo."""
+    return normalizar_email(dados.get("email_verificado", "")) or \
+        normalizar_email(dados.get("email_administrativo", ""))
 
 
 def normalizar_uf(valor: str) -> str | None:
@@ -301,29 +310,49 @@ def ler_csv(caminho: str) -> list[list[str]]:
 
 
 # ---------------------------------------------------------------------------
-# Identificadores públicos
+# Identificadores públicos estáveis
 # ---------------------------------------------------------------------------
 
-def gerar_id_publico(
-    dados: dict[str, str], whatsapp: str, segredo: str, ids_publicados_por_telefone: dict[str, list[str]]
-) -> str:
-    """Prioridade: ID_PUBLICO válido > ID já publicado p/ este telefone (mantém
-    URL de perfis existentes) > HMAC do e-mail verificado (estável por conta)."""
+def _hmac(segredo: str, dominio: str, valor: str) -> str:
+    return hmac.new(segredo.encode("utf-8"), f"{dominio}|{valor}".encode("utf-8"),
+                    hashlib.sha256).hexdigest()[:16]
+
+
+def resolver_id_publico(
+    dados: dict[str, str],
+    email: str,
+    whatsapp: str,
+    segredo: str,
+    mapa_identidades: dict[str, str],
+    ids_publicados_por_telefone: dict[str, list[str]],
+) -> tuple[str, tuple[str, str] | None]:
+    """Resolve o ID público e o vínculo (hash de identidade -> id) a registrar.
+
+    Prioridade: ID_PUBLICO persistente > vínculo existente por identidade >
+    migração única por telefone (somente se o ID publicado ainda não estiver
+    vinculado a outra identidade — impede apropriação de URL) > ID derivado
+    determinístico da identidade. O vínculo por identidade garante que trocar
+    o telefone não altera a URL do perfil.
+    """
     id_manual = slug(dados.get("id", ""))
     if REGEX_ID.match(id_manual):
-        return id_manual
+        return id_manual, None
 
-    existentes = ids_publicados_por_telefone.get(whatsapp, [])
-    if len(existentes) == 1:
-        return existentes[0]
+    hash_identidade = _hmac(segredo, "identidade", email)
+    if hash_identidade in mapa_identidades:
+        return mapa_identidades[hash_identidade], None
 
-    email = normalizar_email(dados.get("email_verificado", "") or dados.get("email_administrativo", ""))
-    identidade = f"email|{email}"
-    return hmac.new(segredo.encode("utf-8"), identidade.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+    derivado = _hmac(segredo, "id", email)
+    vinculados = set(mapa_identidades.values())
+    publicados = ids_publicados_por_telefone.get(whatsapp, [])
+    if len(publicados) == 1 and publicados[0] not in vinculados and publicados[0] != derivado:
+        # Migração de perfil publicado antes do mapa: mantém a URL atual.
+        return publicados[0], (hash_identidade, publicados[0])
+    return derivado, (hash_identidade, derivado)
 
 
 # ---------------------------------------------------------------------------
-# Processamento
+# Classificação e sinais de moderação
 # ---------------------------------------------------------------------------
 
 def classificar_status(status: str) -> str:
@@ -340,53 +369,74 @@ def classificar_status(status: str) -> str:
     return "pendente"  # valor desconhecido: retido por segurança
 
 
-def motivos_suspeita(dados: dict[str, str], telefone_compartilhado: int) -> list[str]:
-    """Indícios objetivos que retêm o registro para revisão (liberáveis com
-    STATUS=APROVADO). Filtros não garantem ausência de fraudes — são triagem."""
+def ativo_bloqueia(valor: str) -> bool:
+    texto = normalizar_texto(valor)
+    return texto.startswith("nao") or texto in {"inativo", "false", "0", "n"}
+
+
+def motivos_suspeita(dados: dict[str, str], telefone_contas: int) -> list[str]:
+    """Sinais FORTES: indício real de abuso/impersonação — retêm o registro.
+    Filtros automáticos não garantem ausência de fraudes; são apenas triagem."""
     motivos: list[str] = []
-    email = normalizar_email(dados.get("email_verificado", ""))
-    if not email:
-        motivos.append("sem e-mail verificado (identidade)")
-    if " " not in dados.get("nome", "").strip():
-        motivos.append("nome com uma única palavra")
-    if len(limpar_celula(dados.get("descricao", ""))) < TAMANHO_MINIMO_DESCRICAO:
-        motivos.append("descrição muito curta")
-    if REGEX_LINK.search(dados.get("nome", "") or "") or REGEX_LINK.search(dados.get("descricao", "") or ""):
-        motivos.append("link em nome ou descrição")
-    if telefone_compartilhado >= TELEFONE_COMPARTILHADO_LIMITE:
-        motivos.append(f"telefone compartilhado por {telefone_compartilhado} contas")
+    if not identidade_email(dados):
+        motivos.append("sem e-mail utilizável (identidade administrativa)")
+    if REGEX_LINK.search(dados.get("nome", "") or ""):
+        motivos.append("link no nome do profissional")
+    if telefone_contas >= TELEFONE_COMPARTILHADO_LIMITE:
+        motivos.append(f"mesmo telefone em {telefone_contas} contas distintas")
     return motivos
 
+
+def sinais_fracos(dados: dict[str, str]) -> list[str]:
+    """Sinais FRACOS: não retêm profissionais legítimos — apenas sinalizam
+    para a moderação revisar (nomes artísticos/comerciais curtos, portfólios)."""
+    sinais: list[str] = []
+    if " " not in dados.get("nome", "").strip():
+        sinais.append("nome de uma palavra (pode ser nome artístico)")
+    if len(limpar_celula(dados.get("descricao", ""))) < TAMANHO_DESCRICAO_FRACA:
+        sinais.append("descrição curta")
+    if REGEX_LINK.search(dados.get("descricao", "") or ""):
+        sinais.append("link na descrição (portfólio)")
+    return sinais
+
+
+# ---------------------------------------------------------------------------
+# Processamento
+# ---------------------------------------------------------------------------
 
 def processar_linha(
     dados: dict[str, str],
     numero_linha: int,
     avisos: list[str],
+    eventos: dict[str, list[dict[str, Any]]],
     segredo: str,
+    mapa_identidades: dict[str, str],
     ids_publicados_por_telefone: dict[str, list[str]],
     telefone_contas: int,
-) -> tuple[dict[str, Any] | None, str]:
-    """Retorna (registro|None, desfecho) — desfecho para contagem estatística:
-    publicado | invalido | pendente | bloqueado | retido."""
+) -> tuple[dict[str, Any] | None, str, tuple[str, str] | None]:
+    """Retorna (registro|None, desfecho, vinculo_identidade|None)."""
     def avisar(motivo: str) -> None:
         avisos.append(f"linha {numero_linha}: {motivo}")
 
     if not any(dados.values()):
-        return None, "vazia"
+        return None, "vazia", None
 
     situacao = classificar_status(dados.get("status", ""))
-    ativo_bloqueia = normalizar_texto(dados.get("ativo", "")).startswith("nao") or \
-        normalizar_texto(dados.get("ativo", "")).strip() in {"inativo", "false", "0"}
-
-    if situacao == "bloqueado" or ativo_bloqueia:
-        return None, "bloqueado"  # bloqueio administrativo: edição não reativa
+    if situacao == "bloqueado" or ativo_bloqueia(dados.get("ativo", "")):
+        motivo = "STATUS=" + (dados.get("status", "").strip().upper() or "?")
+        if ativo_bloqueia(dados.get("ativo", "")):
+            motivo = "ATIVO=NÃO"
+        eventos["bloqueados"].append({"linha": numero_linha, "motivo": motivo})
+        return None, "bloqueado", None  # edição do Forms não reativa
 
     if situacao == "pendente":
-        avisar("retido: STATUS=PENDENTE (revisão manual)")
-        return None, "pendente"
+        motivo = "STATUS=PENDENTE" if dados.get("status", "").strip() else "STATUS desconhecido"
+        avisar(f"retido: {motivo} (revisão manual)")
+        eventos["pendentes"].append({"linha": numero_linha, "motivo": motivo})
+        return None, "pendente", None
 
-    # Validações (qualquer desfecho posterior depende de dados íntegros).
-    email = normalizar_email(dados.get("email_verificado", ""))
+    # --- Validações essenciais (registro inválido nunca publica) ---
+    email = identidade_email(dados)
     whatsapp = normalizar_whatsapp(dados.get("whatsapp", ""))
     uf = normalizar_uf(dados.get("uf", ""))
     municipio = dados.get("municipio", "")[:120]
@@ -395,10 +445,7 @@ def processar_linha(
     profissao = dados.get("profissao", "")[:120]
     descricao = dados.get("descricao", "")[:2000]
 
-    invalidos = []
-    if not email:
-        # e-mail ausente não invalida: vira suspeito (identidade fraca)
-        pass
+    invalidos: list[str] = []
     if whatsapp is None:
         invalidos.append("WhatsApp inválido")
     if uf is None:
@@ -423,17 +470,25 @@ def processar_linha(
 
     if invalidos:
         avisar("inválido — " + "; ".join(invalidos) + " — não publicado")
-        return None, "invalido"
+        eventos["invalidos"].append({"linha": numero_linha, "motivos": invalidos})
+        return None, "invalido", None
 
-    # Moderação por exceção: suspeitos ficam retidos salvo chancela (APROVADO).
-    if situacao == "auto":
-        motivos = motivos_suspeita(dados, telefone_contas)
-        if motivos:
-            avisar("retido para revisão: " + "; ".join(motivos))
-            return None, "retido"
+    # --- Sinais: fortes retêm; fracos apenas sinalizam ---
+    fortes = motivos_suspeita(dados, telefone_contas)
+    if situacao == "auto" and fortes:
+        avisar("retido para revisão: " + "; ".join(fortes))
+        eventos["retidos"].append({"linha": numero_linha, "motivos": fortes})
+        return None, "retido", None
 
+    for sinal in sinais_fracos(dados):
+        avisos.append(f"linha {numero_linha}: sinal fraco (publicado) — {sinal}")
+        eventos["sinais_fracos"].append({"linha": numero_linha, "sinal": sinal})
+
+    id_publico, vinculo = resolver_id_publico(
+        dados, email, whatsapp, segredo, mapa_identidades, ids_publicados_por_telefone
+    )
     registro = {
-        "id": gerar_id_publico(dados, whatsapp, segredo, ids_publicados_por_telefone),
+        "id": id_publico,
         "nome": nome,
         "categoria": categoria,
         "categoriaSlug": categoria_slug,
@@ -449,7 +504,7 @@ def processar_linha(
         "whatsapp": whatsapp,
         "atualizadoEm": data_referencia.isoformat(),
     }
-    return registro, "publicado"
+    return registro, "publicado", vinculo
 
 
 def _prioridade(dados: dict[str, str], indice: int) -> tuple:
@@ -464,10 +519,17 @@ def montar_catalogo(
     linhas: list[list[str]],
     mapa: dict[str, int],
     segredo: str,
+    mapa_identidades: dict[str, str] | None = None,
     ids_publicados_por_telefone: dict[str, list[str]] | None = None,
-) -> tuple[dict[str, Any], dict[str, int], list[str]]:
+) -> tuple[dict[str, Any], dict[str, int], list[str], dict[str, str], dict[str, list[dict[str, Any]]]]:
+    """Retorna (catálogo, contagem, avisos, mapa de identidades, eventos de moderação)."""
+    mapa_identidades = dict(mapa_identidades or {})
     ids_publicados_por_telefone = ids_publicados_por_telefone or {}
     avisos: list[str] = []
+    eventos: dict[str, list[dict[str, Any]]] = {
+        "retidos": [], "pendentes": [], "bloqueados": [],
+        "invalidos": [], "sinais_fracos": [],
+    }
     contagem = {
         "linhas": 0, "publicados": 0, "retidos": 0, "pendentes": 0,
         "bloqueados": 0, "invalidos": 0, "duplicados": 0,
@@ -480,12 +542,12 @@ def montar_catalogo(
             continue
         todas.append((indice, indice + 2, dados))
 
-    # Pré-passo: quantas contas distintas usam cada telefone (suspeita).
+    # Pré-passo: contas distintas por telefone (sinal forte).
     contas_por_telefone: dict[str, set[str]] = {}
     for indice, _, dados in todas:
         whatsapp = normalizar_whatsapp(dados.get("whatsapp", ""))
         if whatsapp:
-            identidade = normalizar_email(dados.get("email_verificado", "")) or f"linha:{indice}"
+            identidade = identidade_email(dados) or f"linha:{indice}"
             contas_por_telefone.setdefault(whatsapp, set()).add(identidade)
 
     por_id: dict[str, tuple[dict[str, Any], tuple]] = {}
@@ -493,13 +555,13 @@ def montar_catalogo(
 
     for indice, numero_linha, dados in todas:
         contagem["linhas"] += 1
-        telefone_contas = 0
         whatsapp_normalizado = normalizar_whatsapp(dados.get("whatsapp", ""))
-        if whatsapp_normalizado:
-            telefone_contas = len(contas_por_telefone.get(whatsapp_normalizado, set()))
+        telefone_contas = len(contas_por_telefone.get(whatsapp_normalizado, set())) \
+            if whatsapp_normalizado else 0
 
-        registro, desfecho = processar_linha(
-            dados, numero_linha, avisos, segredo, ids_publicados_por_telefone, telefone_contas
+        registro, desfecho, vinculo = processar_linha(
+            dados, numero_linha, avisos, eventos, segredo,
+            mapa_identidades, ids_publicados_por_telefone, telefone_contas,
         )
 
         if registro is None:
@@ -507,14 +569,17 @@ def montar_catalogo(
                 contagem[desfecho + "s"] += 1
             continue
 
+        if vinculo:
+            hash_identidade, id_vinculado = vinculo
+            mapa_identidades[hash_identidade] = id_vinculado
+
         prioridade = _prioridade(dados, indice)
 
-        # Duplicação por e-mail verificado (mesma conta enviando mais de uma vez):
-        # vale a versão mais recente.
-        email = normalizar_email(dados.get("email_verificado", ""))
+        # Duplicação por identidade (mesma conta): vale a versão mais recente.
+        email = identidade_email(dados)
         if email and email in por_email:
             contagem["duplicados"] += 1
-            avisos.append(f"linha {numero_linha}: e-mail duplicado — mantida a versão mais recente")
+            avisos.append(f"linha {numero_linha}: identidade duplicada — mantida a versão mais recente")
             if prioridade >= por_email[email][1]:
                 antiga = por_email[email][0]
                 por_email[email] = (registro, prioridade)
@@ -559,7 +624,7 @@ def montar_catalogo(
         "profissionais": [{campo: registro[campo] for campo in CAMPOS_PUBLICOS}
                           for registro in profissionais],
     }
-    return catalogo, contagem, avisos
+    return catalogo, contagem, avisos, mapa_identidades, eventos
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +660,9 @@ def validar_catalogo(dados: Any) -> tuple[bool, list[str]]:
         proibidas = CHAVES_PROIBIDAS & set(item)
         if proibidas:
             erros.append(f"{prefixo}: contém campos privados ({', '.join(sorted(proibidas))})")
+        extras = set(item) - set(CAMPOS_PUBLICOS)
+        if extras:
+            erros.append(f"{prefixo}: campos fora da allowlist ({', '.join(sorted(extras))})")
         for campo in CAMPOS_PUBLICOS:
             if campo not in item:
                 erros.append(f"{prefixo}: campo '{campo}' ausente")
@@ -652,7 +720,6 @@ def validar_catalogo(dados: Any) -> tuple[bool, list[str]]:
 # ---------------------------------------------------------------------------
 
 def carregar_ids_publicados(diretorio: Path) -> dict[str, list[str]]:
-    """{whatsapp: [ids publicados]} do catálogo atual — para preservar URLs."""
     mapa: dict[str, list[str]] = {}
     caminho = diretorio / ARQUIVO_PRINCIPAL
     if not caminho.exists():
@@ -668,7 +735,6 @@ def carregar_ids_publicados(diretorio: Path) -> dict[str, list[str]]:
 
 
 def comparar_com_atual(diretorio: Path, novo: dict[str, Any]) -> dict[str, int] | None:
-    """Compara o resultado previsto com o catálogo publicado."""
     caminho = diretorio / ARQUIVO_PRINCIPAL
     if not caminho.exists():
         return None
@@ -693,8 +759,59 @@ def comparar_com_atual(diretorio: Path, novo: dict[str, Any]) -> dict[str, int] 
 
 
 # ---------------------------------------------------------------------------
-# Escrita atômica
+# Persistência: mapa de identidades, relatório de moderação, catálogo
 # ---------------------------------------------------------------------------
+
+def carregar_mapa_identidades(diretorio_dados: Path) -> dict[str, str]:
+    caminho = diretorio_dados / "identidades.json"
+    if not caminho.exists():
+        return {}
+    try:
+        dados = json.loads(caminho.read_text(encoding="utf-8"))
+        return {str(k): str(v) for k, v in dados.get("mapa", {}).items()}
+    except (json.JSONDecodeError, OSError, AttributeError):
+        return {}
+
+
+def salvar_mapa_identidades(diretorio_dados: Path, mapa: dict[str, str]) -> bool:
+    caminho = diretorio_dados / "identidades.json"
+    atual = carregar_mapa_identidades(diretorio_dados)
+    if atual == mapa:
+        return False
+    conteudo = {"versao": 1, "mapa": dict(sorted(mapa.items()))}
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    escrever_atomico(caminho, json.dumps(conteudo, ensure_ascii=False, indent=2) + "\n")
+    return True
+
+
+def escrever_relatorio_moderacao(
+    diretorio_dados: Path,
+    modo: str,
+    contagem: dict[str, int],
+    comparacao: dict[str, int] | None,
+    eventos: dict[str, list[dict[str, Any]]],
+) -> Path | None:
+    """Relatório da fila de moderação — apenas linha/motivo, sem dados pessoais."""
+    try:
+        diretorio_dados.mkdir(parents=True, exist_ok=True)
+        caminho = diretorio_dados / "relatorio-moderacao.json"
+        relatorio = {
+            "geradoEm": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "modo": modo,
+            "resumo": contagem,
+            "comparacaoComPublicado": comparacao,
+            "retidosParaRevisao": eventos.get("retidos", []),
+            "pendentesManuais": eventos.get("pendentes", []),
+            "bloqueados": eventos.get("bloqueados", []),
+            "invalidos": eventos.get("invalidos", []),
+            "sinaisFracosPublicados": eventos.get("sinais_fracos", []),
+        }
+        escrever_atomico(caminho, json.dumps(relatorio, ensure_ascii=False, indent=2) + "\n")
+        return caminho
+    except OSError as erro:
+        print(f"  AVISO: não foi possível gravar o relatório de moderação: {erro}")
+        return None
+
 
 def escrever_atomico(caminho: Path, conteudo: str) -> None:
     caminho.parent.mkdir(parents=True, exist_ok=True)
@@ -707,7 +824,8 @@ def _sem_gerado_em(dados: dict[str, Any]) -> dict[str, Any]:
     return {chave: valor for chave, valor in dados.items() if chave != "geradoEm"}
 
 
-def salvar_catalogo(diretorio: Path, catalogo: dict[str, Any]) -> bool:
+def salvar_catalogo(diretorio: Path, catalogo: dict[str, Any],
+                     diretorio_dados: Path, mapa_identidades: dict[str, str]) -> bool:
     caminho_principal = diretorio / ARQUIVO_PRINCIPAL
 
     atual: dict[str, Any] | None = None
@@ -718,6 +836,7 @@ def salvar_catalogo(diretorio: Path, catalogo: dict[str, Any]) -> bool:
             atual = None
 
     if atual is not None and _sem_gerado_em(atual) == _sem_gerado_em(catalogo):
+        salvar_mapa_identidades(diretorio_dados, mapa_identidades)
         return False
 
     catalogo["geradoEm"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -748,10 +867,7 @@ def salvar_catalogo(diretorio: Path, catalogo: dict[str, Any]) -> bool:
         if existente.name not in desejados:
             existente.unlink()
 
-    legado = diretorio / "catalogo.json"
-    if legado.exists():
-        legado.unlink()
-
+    salvar_mapa_identidades(diretorio_dados, mapa_identidades)
     return True
 
 
@@ -763,7 +879,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Sincroniza a planilha privada do Google Sheets com o catálogo público."
     )
-    parser.add_argument("--saida", default="public/data", help="diretório de saída")
+    parser.add_argument("--saida", default="public/data", help="diretório de saída público")
+    parser.add_argument("--dir-dados", default="dados",
+                        help="diretório de dados operacionais (identidades.json, relatório)")
     parser.add_argument("--csv", help="lê de um CSV local em vez do Google Sheets (testes)")
     parser.add_argument("--planilha-id", default=os.environ.get("GOOGLE_SHEET_ID", ""))
     parser.add_argument("--aba", default=os.environ.get("GOOGLE_SHEET_TAB_NAME", ABA_PADRAO))
@@ -833,8 +951,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     diretorio = Path(args.saida)
+    diretorio_dados = Path(args.dir_dados)
+    mapa_identidades = carregar_mapa_identidades(diretorio_dados)
     ids_publicados = carregar_ids_publicados(diretorio)
-    catalogo, contagem, avisos = montar_catalogo(linhas[1:], mapa, segredo, ids_publicados)
+
+    catalogo, contagem, avisos, mapa_atualizado, eventos = montar_catalogo(
+        linhas[1:], mapa, segredo, mapa_identidades, ids_publicados
+    )
 
     catalogo_teste = dict(catalogo)
     catalogo_teste["geradoEm"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -874,11 +997,23 @@ def main(argv: list[str] | None = None) -> int:
     if not args.verbose and len(avisos) > limite_avisos:
         print(f"  … e mais {len(avisos) - limite_avisos} avisos (use --verbose para todos).")
 
+    # Relatório da fila de moderação — gravado em toda execução (inclusive
+    # simulação), para consulta sem backend e sem escrita na planilha.
+    relatorio = escrever_relatorio_moderacao(
+        diretorio_dados,
+        "GRAVACAO" if gravar else "SIMULACAO",
+        contagem,
+        comparacao,
+        eventos,
+    )
+    if relatorio:
+        print(f"  relatório de moderação: {relatorio}")
+
     if not gravar:
         return 0
 
     try:
-        mudou = salvar_catalogo(diretorio, catalogo)
+        mudou = salvar_catalogo(diretorio, catalogo, diretorio_dados, mapa_atualizado)
     except (OSError, ValueError) as erro:
         print(f"FALHA ao gravar os arquivos: {erro}", file=sys.stderr)
         return 1

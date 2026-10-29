@@ -57,14 +57,31 @@ jobs:
           PUBLIC_ID_SECRET: ${{ secrets.PUBLIC_ID_SECRET }}
         run: |
           if [ "${{ steps.modo.outputs.gravar }}" = "true" ]; then
-            python scripts/sync_catalogo.py --saida public/data --publicar --verbose
+            python scripts/sync_catalogo.py --saida public/data --dir-dados dados --publicar --verbose
           else
-            python scripts/sync_catalogo.py --saida public/data --dry-run --verbose
+            python scripts/sync_catalogo.py --saida public/data --dir-dados dados --dry-run --verbose
           fi
+
+      # Relatório da fila de moderação (retidos/motivos/bloqueios) como
+      # artifact — consulta sem backend e sem escrita na planilha.
+      - name: Publicar relatório de moderação
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-moderacao
+          path: dados/relatorio-moderacao.json
+          if-no-files-found: ignore
 
       - name: Validar catálogo gerado
         if: steps.modo.outputs.gravar == 'true'
         run: python scripts/validar_catalogo.py public/data/profissionais.json
+
+      # Gate de qualidade: os testes Python rodam ANTES de qualquer commit
+      # de dados públicos — se falharem, o job para e o catálogo existente
+      # no repositório permanece intacto.
+      - name: Testes do sincronizador (pytest)
+        if: steps.modo.outputs.gravar == 'true'
+        run: pytest scripts/tests -q
 
       - uses: actions/setup-node@v4
         if: steps.modo.outputs.gravar == 'true'
@@ -76,7 +93,7 @@ jobs:
         if: steps.modo.outputs.gravar == 'true'
         run: npm ci
 
-      - name: Testes
+      - name: Testes do site
         if: steps.modo.outputs.gravar == 'true'
         run: npm test
 
@@ -88,7 +105,7 @@ jobs:
         if: steps.modo.outputs.gravar == 'true'
         id: mudancas
         run: |
-          if git diff --quiet -- public/data; then
+          if git diff --quiet -- public/data dados/identidades.json; then
             echo "houve=false" >> "$GITHUB_OUTPUT"
           else
             echo "houve=true" >> "$GITHUB_OUTPUT"
@@ -100,6 +117,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add public/data
+          git add dados/identidades.json 2>/dev/null || true
           git commit -m "chore(sync): atualizar profissionais ($(date -u '+%Y-%m-%d %H:%M') UTC)"
           git push
 

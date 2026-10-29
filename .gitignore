@@ -24,3 +24,6 @@ Thumbs.db
 
 # Documentação operacional interna (não publicada)
 docs/
+
+# Dados operacionais locais (o mapa de identidades E versionado; o relatório não)
+dados/relatorio-moderacao.json
