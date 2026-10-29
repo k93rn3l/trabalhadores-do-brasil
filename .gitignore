@@ -21,3 +21,6 @@ Thumbs.db
 *.log
 .vscode/
 .idea/
+
+# Documentação operacional interna (não publicada)
+docs/

@@ -266,7 +266,7 @@ def mapa_colunas(cabecalho: list[str]) -> dict[str, int]:
         raise ErroColunas(
             "Cabeçalhos obrigatórios ausentes na planilha: "
             + ", ".join(sorted(faltando))
-            + ". Verifique a aba e os títulos (docs/GOOGLE_SHEETS_E_GOOGLE_CLOUD.md)."
+            + ". Verifique a aba e os títulos das colunas."
         )
     return mapa
 
