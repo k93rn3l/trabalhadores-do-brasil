@@ -39,6 +39,7 @@ de build `npm run build` e diretório de saída `dist`).
 
 ## Dados e privacidade
 
-O catálogo público fica em `public/data/`. Cadastros passam por revisão
-humana e só são publicados com consentimento explícito do profissional —
-veja a Política de Privacidade no próprio site (`/privacidade/`).
+O catálogo público fica em `public/data/`. Cadastros válidos são publicados
+automaticamente com o consentimento explícito do profissional; a moderação
+atua por exceção (denúncias, bloqueios e registros suspeitos) — veja a
+Política de Privacidade no próprio site (`/privacidade/`).

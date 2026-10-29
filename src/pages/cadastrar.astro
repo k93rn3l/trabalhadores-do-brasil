@@ -1,5 +1,5 @@
 ---
-/** Cadastro: explicação mínima + formulário externo configurável. */
+/** Cadastro: publicação automática após validação + edição pelo Forms. */
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { siteConfig, recursoConfigurado } from '../config/site';
 
@@ -13,8 +13,9 @@ const formConfigurado = recursoConfigurado(siteConfig.urlFormCadastro);
   <div class="container">
     <h1>Cadastre seu serviço</h1>
     <p class="texto-suave">
-      Grátis e sem criar conta. Preencha o formulário; após revisão, seu perfil
-      é publicado.
+      Grátis e sem criar conta. Preencha o formulário com sua conta Google —
+      o perfil é publicado automaticamente assim que os dados passam pela
+      validação.
     </p>
 
     {
@@ -31,13 +32,23 @@ const formConfigurado = recursoConfigurado(siteConfig.urlFormCadastro);
       )
     }
 
+    <section class="secao" aria-labelledby="titulo-como">
+      <h2 id="titulo-como">Como funciona</h2>
+      <ul>
+        <li>Uma resposta por conta Google — o e-mail verifica sua identidade e evita duplicatas;</li>
+        <li>Publicação automática após validação (consentimento, dados completos e verificação de abuso);</li>
+        <li>Para alterar depois, use o link de edição do formulário (o Google envia na confirmação por e-mail) — a mudança entra no site em até 1 hora;</li>
+        <li>Moderação por exceção: denúncias e bloqueios são tratados pela equipe.</li>
+      </ul>
+    </section>
+
     <section class="secao" aria-labelledby="titulo-dados">
       <h2 id="titulo-dados">Seus dados</h2>
       <ul>
         <li><strong>Publicados:</strong> nome, categoria, profissão, descrição, localização e WhatsApp.</li>
-        <li><strong>Privados:</strong> e-mail e endereço comercial (nunca aparecem no site).</li>
+        <li><strong>Privados (nunca publicados):</strong> o e-mail da sua conta Google — usado apenas para identificar o cadastro —, e-mail administrativo e endereço comercial.</li>
         <li>Não pedimos CPF, RG ou endereço residencial.</li>
-        <li>Correção, pausa ou exclusão a qualquer momento — veja <a href="/solicitar-alteracao/">alterar ou excluir cadastro</a> e a <a href="/privacidade/">Política de Privacidade</a>.</li>
+        <li>Exclusão ou bloqueio a qualquer momento — veja <a href="/solicitar-alteracao/">alterar ou excluir cadastro</a> e a <a href="/privacidade/">Política de Privacidade</a>.</li>
       </ul>
     </section>
   </div>

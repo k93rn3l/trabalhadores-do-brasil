@@ -29,7 +29,7 @@ import { siteConfig } from '../config/site';
       <p>Coletamos apenas o mínimo necessário para divulgar serviços:</p>
       <ul>
         <li><strong>Dados públicos do profissional</strong> (fornecidos voluntariamente no cadastro): nome público ou comercial, categoria, profissão, descrição do serviço, estado, município, bairros/regiões atendidas, outros municípios atendidos, atendimento remoto e WhatsApp profissional.</li>
-        <li><strong>Dados administrativos</strong> (não publicados): e-mail de contato e, opcionalmente, endereço comercial; anotações internas de moderação.</li>
+        <li><strong>Dados administrativos</strong> (não publicados): o <strong>e-mail verificado da conta Google</strong> usado no formulário (serve como identidade administrativa do cadastro e para evitar duplicatas — o formulário aceita uma resposta por conta), o e-mail de contato informado e, opcionalmente, endereço comercial; anotações internas de moderação.</li>
       </ul>
       <p>
         <strong>Não coletamos</strong> CPF, RG, endereço residencial completo
@@ -46,22 +46,28 @@ import { siteConfig } from '../config/site';
         <li>Prevenção a fraudes e abusos (moderação e análise de denúncias).</li>
       </ul>
 
-      <h2>3. Base legal e consentimento</h2>
+      <h2>3. Base legal, consentimento e publicação automática</h2>
       <p>
         A publicação de dados no catálogo ocorre exclusivamente com{' '}
         <strong>consentimento explícito</strong> do profissional, registrado no
         momento do cadastro (art. 7º, I e art. 11, I da LGPD). O consentimento
         é específico e destacado: o formulário deixa claro quais campos serão
-        divulgados publicamente. O tratamento administrativo interno (revisão
-        e moderação) apoia-se no legítimo interesse de manter o catálogo
-        íntegro e seguro.
+        divulgados publicamente. Com o consentimento válido, a publicação é
+        <strong>automática</strong>, após validação dos dados obrigatórios e de
+        sinais objetivos de abuso — não há aprovação individual de cada
+        cadastro. A moderação atua <strong>por exceção</strong>: denúncias,
+        bloqueios administrativos e registros retidos por indícios relevantes.
+        O e-mail verificado da conta Google identifica o titular do cadastro
+        para fins administrativos e nunca é publicado.
       </p>
 
       <h2>4. O que é publicado</h2>
       <p>
         Somente os campos listados no item 1 como “dados públicos” são
-        divulgados, e somente para cadastros <strong>aprovados, ativos e com
-        consentimento válido</strong>. E-mail administrativo, endereço
+        divulgados, e somente para cadastros com <strong>consentimento
+        válido</strong> que passaram pela validação automática. Registros
+        bloqueados pela moderação ou retidos por indícios de abuso não são
+        divulgados. E-mail verificado, e-mail administrativo, endereço
         comercial informado opcionalmente e anotações internas{' '}
         <strong>nunca</strong> são publicados.
       </p>
