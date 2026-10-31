@@ -34,6 +34,7 @@ COLUNAS_MODELO = [
     ("Outros municípios atendidos", "outros_municipios"),
     ("Atendimento remoto", "remoto"),
     (" WhatsApp ", "whatsapp"),
+    (" Instagram (@) ", "instagram"),
     ("E-mail administrativo", "email_administrativo"),
     ("Endereço comercial", "endereco"),
     ("Consentimento para publicação", "consentimento"),
@@ -43,6 +44,7 @@ COLUNAS_MODELO = [
     ("DATA_APROVACAO", "data_aprovacao"),
     ("DATA_ATUALIZACAO", "data_atualizacao"),
     ("OBSERVACOES_INTERNAS", "observacoes"),
+    (" Solicitar exclusão do perfil ", "solicitar_exclusao"),
 ]
 CABECALHO = [titulo for titulo, _ in COLUNAS_MODELO]
 
@@ -64,6 +66,7 @@ PADRAO = {
     "outros_municipios": "Valinhos",
     "remoto": "Sim",
     "whatsapp": "19999990001",
+    "instagram": "",
     "email_administrativo": "contato@exemplo.com",
     "endereco": "Rua das Flores, 123",
     "consentimento": CONSENTIMENTO,
@@ -73,6 +76,7 @@ PADRAO = {
     "data_atualizacao": "",
     "observacoes": "anotacao interna sensivel",
     "ativo": "",
+    "solicitar_exclusao": "",
 }
 
 
@@ -82,10 +86,11 @@ def linha(**sobrescritas) -> list[str]:
     return [valores[chave] for _, chave in COLUNAS_MODELO]
 
 
-def montar(linhas, mapa_identidades=None, ids_publicados=None):
+def montar(linhas, mapa_identidades=None, ids_publicados=None, mapa_exclusoes=None):
     mapa = sync.mapa_colunas(CABECALHO)
     return sync.montar_catalogo(
-        linhas, mapa, SEGREDO_TESTE, mapa_identidades or {}, ids_publicados or {}
+        linhas, mapa, SEGREDO_TESTE, mapa_identidades or {}, ids_publicados or {},
+        mapa_exclusoes or {},
     )
 
 
@@ -134,30 +139,30 @@ class TestNovoCadastro:
 
 class TestSinaisFracosVSFortes:
     def test_nome_de_uma_palavra_publica_com_sinal(self):
-        _, contagem, avisos, _, eventos = montar([linha(nome="Renata")])
+        _, contagem, avisos, _, eventos, _ = montar([linha(nome="Renata")])
         assert contagem["publicados"] == 1 and contagem["retidos"] == 0
         assert any("sinal fraco" in a for a in avisos)
         assert eventos["sinais_fracos"] and eventos["sinais_fracos"][0]["linha"] == 2
 
     def test_descricao_curta_publica_com_sinal(self):
-        _, contagem, _, _, eventos = montar([linha(descricao="Corto cabelo.")])
+        _, contagem, _, _, eventos, _ = montar([linha(descricao="Corto cabelo.")])
         assert contagem["publicados"] == 1
         assert any("descrição curta" in e["sinal"] for e in eventos["sinais_fracos"])
 
     def test_link_na_descricao_publica_com_sinal(self):
-        _, contagem, _, _, eventos = montar([
+        _, contagem, _, _, eventos, _ = montar([
             linha(descricao="Meu portfólio em www.meustrabalhos.com.br com fotos reais.")
         ])
         assert contagem["publicados"] == 1
         assert any("link na descrição" in e["sinal"] for e in eventos["sinais_fracos"])
 
     def test_link_no_nome_retem(self):
-        _, contagem, _, _, eventos = montar([linha(nome="Maria www.promo.com")])
+        _, contagem, _, _, eventos, _ = montar([linha(nome="Maria www.promo.com")])
         assert contagem["retidos"] == 1 and contagem["publicados"] == 0
         assert any("link no nome" in ";".join(e["motivos"]) for e in eventos["retidos"])
 
     def test_sem_nenhum_email_retem(self):
-        _, contagem, _, _, eventos = montar([
+        _, contagem, _, _, eventos, _ = montar([
             linha(email_verificado="", email_administrativo="")
         ])
         assert contagem["retidos"] == 1
@@ -168,7 +173,7 @@ class TestSinaisFracosVSFortes:
         assert contagem["publicados"] == 1
 
     def test_telefone_em_tres_contas_retem(self):
-        _, contagem, _, _, eventos = montar([
+        _, contagem, _, _, eventos, _ = montar([
             linha(email_verificado="a@exemplo.com", whatsapp="19999990001", municipio="Campinas"),
             linha(email_verificado="b@exemplo.com", nome="João Souza", whatsapp="19999990001",
                   municipio="Santos"),
@@ -215,8 +220,6 @@ class TestIdentificadores:
         catalogo, *_ = montar([linha()], ids_publicados={"5519999990001": ["id-antigo-abc"]})
         id_maria = catalogo["profissionais"][0]["id"]  # vinculado na 1ª resolução
         mapa = sync.carregar_mapa_identidades(Path("_inexistente_"))
-        # segunda identidade, MESMO telefone, ID publicado diferente:
-        _, _, _, _, _ = None, None, None, None, None
         mapa_teste = {
             # hash de identidade da Maria -> id que ela já tem
             sync._hmac(SEGREDO_TESTE, "identidade", "maria@exemplo.com"): "id-ja-vinculado",
@@ -244,7 +247,7 @@ class TestIdentificadores:
 class TestBloqueioEEdicao:
     @pytest.mark.parametrize("status", ["REJEITADO", "INATIVO"])
     def test_status_bloqueante_impede(self, status):
-        _, contagem, _, _, eventos = montar([linha(status=status)])
+        _, contagem, _, _, eventos, _ = montar([linha(status=status)])
         assert contagem["publicados"] == 0 and contagem["bloqueados"] == 1
         assert eventos["bloqueados"] and eventos["bloqueados"][0]["linha"] == 2
 
@@ -298,6 +301,237 @@ class TestDuplicacoes:
                   descricao="Outra conta, mesmo anúncio."),
         ])
         assert contagem["publicados"] == 1 and contagem["duplicados"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Instagram: campo opcional — inválido não impede a publicação
+# ---------------------------------------------------------------------------
+
+class TestInstagramOpcional:
+    def test_sem_instagram_publica_com_null(self):
+        registro = montar([linha()])[0]["profissionais"][0]
+        assert registro["instagram"] is None
+
+    def test_instagram_com_arroba_normaliza_sem_arroba(self):
+        registro = montar([linha(instagram="@maria.silva")])[0]["profissionais"][0]
+        assert registro["instagram"] == "maria.silva"
+
+    def test_instagram_invalido_publica_sem_o_campo_e_avisa(self):
+        catalogo, contagem, avisos, *_ = montar([linha(instagram="instagram.com/maria")])
+        assert contagem["publicados"] == 1
+        assert catalogo["profissionais"][0]["instagram"] is None
+        assert any("instagram" in a.lower() for a in avisos)
+
+    def test_validador_rejeita_instagram_publicado_invalido(self):
+        catalogo = montar([linha()])[0]
+        for ruim in ["@maria", "https://instagram.com/maria", "a..b", "a" * 31]:
+            catalogo["profissionais"][0]["instagram"] = ruim
+            assert not sync.validar_catalogo(
+                {**catalogo, "geradoEm": "2026-10-28T12:00:00Z"})[0], ruim
+
+
+# ---------------------------------------------------------------------------
+# Exclusão voluntária do perfil (coluna "Solicitar exclusão do perfil")
+# ---------------------------------------------------------------------------
+
+EXCLUSAO = "Solicito a remoção do meu perfil do catálogo público."
+
+# Planilha antiga, sem a coluna de exclusão: comportamento anterior preservado.
+COLUNAS_ANTIGAS = [(titulo, chave) for titulo, chave in COLUNAS_MODELO
+                   if chave != "solicitar_exclusao"]
+CABECALHO_ANTIGO = [titulo for titulo, _ in COLUNAS_ANTIGAS]
+
+
+def linha_antiga(**sobrescritas) -> list[str]:
+    valores = dict(PADRAO)
+    valores.update(sobrescritas)
+    return [valores[chave] for _, chave in COLUNAS_ANTIGAS]
+
+
+class TestExclusaoVoluntaria:
+    def test_planilha_sem_a_coluna_mantem_comportamento(self):
+        mapa = sync.mapa_colunas(CABECALHO_ANTIGO)
+        catalogo, contagem, *_ = sync.montar_catalogo(
+            [linha_antiga()], mapa, SEGREDO_TESTE)
+        assert contagem["publicados"] == 1
+        assert contagem["exclusoes_solicitadas"] == 0 and contagem["excluidos"] == 0
+
+    def test_campo_vazio_publica_normalmente(self):
+        _, contagem, *_ = montar([linha()])
+        assert contagem["publicados"] == 1 and contagem["excluidos"] == 0
+
+    def test_campo_marcado_novo_cadastro_nao_publica(self):
+        catalogo, contagem, *_ = montar([linha(solicitar_exclusao=EXCLUSAO)])
+        assert contagem["publicados"] == 0 and contagem["excluidos"] == 1
+        assert catalogo["profissionais"] == []
+
+    def test_somente_a_frase_exata_autoriza(self):
+        for ruim in ["sim", "remover perfil", EXCLUSAO + " por favor",
+                     "quero sair do catalogo", "  "]:
+            _, contagem, *_ = montar([linha(solicitar_exclusao=ruim)])
+            assert contagem["publicados"] == 1, ruim
+            assert contagem["excluidos"] == 0 and contagem["exclusoes_solicitadas"] == 0, ruim
+
+    def test_perfil_publicado_e_removido_na_proxima_sincronizacao(self, tmp_path):
+        saida = tmp_path / "data"
+        assert executar(tmp_path, [linha()]) == 0
+        principal = json.loads((saida / "profissionais.json").read_text(encoding="utf-8"))
+        assert principal["total"] == 1 and (saida / "uf" / "sp.json").exists()
+
+        assert executar(tmp_path, [linha(solicitar_exclusao=EXCLUSAO)]) == 0
+        principal = json.loads((saida / "profissionais.json").read_text(encoding="utf-8"))
+        assert principal["total"] == 0
+        assert not (saida / "uf" / "sp.json").exists()  # JSON derivado também some
+
+    def test_resposta_antiga_valida_nao_republica_apos_exclusao(self):
+        # Mesma identidade: resposta antiga válida + posterior solicitando saída.
+        # As DUAS respostas da identidade são suprimidas (contador por linha).
+        _, contagem, *_ = montar([
+            linha(timestamp="01/10/2026 09:00:00"),
+            linha(timestamp="05/10/2026 09:00:00", solicitar_exclusao=EXCLUSAO),
+        ])
+        assert contagem["publicados"] == 0 and contagem["excluidos"] == 2
+
+    def test_exclusao_persiste_e_desmarcar_nao_reativa(self, tmp_path):
+        saida, dados_dir = tmp_path / "data", tmp_path / "dados"
+        assert executar(tmp_path, [linha()]) == 0
+        assert executar(tmp_path, [linha(solicitar_exclusao=EXCLUSAO)]) == 0
+        # Terceira execução com a caixa DESMARCADA: continua excluído.
+        assert executar(tmp_path, [linha()]) == 0
+        principal = json.loads((saida / "profissionais.json").read_text(encoding="utf-8"))
+        assert principal["total"] == 0
+
+        conteudo = (dados_dir / "exclusoes.json").read_text(encoding="utf-8")
+        assert sync._hmac(SEGREDO_TESTE, "identidade", "maria@exemplo.com") in conteudo
+        assert "@" not in conteudo and "maria" not in conteudo  # pseudonimizado
+
+    def test_outros_profissionais_parecidos_nao_sao_excluidos(self):
+        catalogo, contagem, *_ = montar([
+            linha(email_verificado="sai@exemplo.com", solicitar_exclusao=EXCLUSAO),
+            linha(email_verificado="fica@exemplo.com", nome="Maria da Silva Jr.",
+                  whatsapp="19999990001", municipio="Sumaré"),
+        ])
+        assert contagem["publicados"] == 1
+        assert catalogo["profissionais"][0]["nome"] == "Maria da Silva Jr."
+
+    def test_mesmo_id_publico_em_outra_identidade_nao_remove_terceiro(self):
+        catalogo, contagem, *_ = montar([
+            linha(email_verificado="dono@exemplo.com", id="perfil-compartilhado-01"),
+            linha(email_verificado="outro@exemplo.com", id="perfil-compartilhado-01",
+                  municipio="Sumaré", solicitar_exclusao=EXCLUSAO),
+        ])
+        assert contagem["publicados"] == 1  # quem pediu saiu; o dono permanece
+        assert catalogo["profissionais"][0]["id"] == "perfil-compartilhado-01"
+
+    def test_identidade_ausente_vira_pendencia_sem_excluir_terceiros(self):
+        _, contagem, avisos, _, eventos, _ = montar([
+            linha(email_verificado="", email_administrativo="",
+                  solicitar_exclusao=EXCLUSAO),
+            linha(email_verificado="outra@exemplo.com", nome="Outra Pessoa",
+                  municipio="Sumaré"),
+        ])
+        assert contagem["exclusoes_pendentes"] == 1
+        assert contagem["excluidos"] == 0
+        assert contagem["publicados"] == 1  # a outra identidade segue publicada
+        assert eventos["exclusoes_pendentes"] and any("pendência" in a for a in avisos)
+
+    def test_somente_email_administrativo_nao_autoriza_exclusao(self):
+        _, contagem, *_ = montar([linha(email_verificado="", solicitar_exclusao=EXCLUSAO)])
+        # A solicitação é identificada, mas sem e-mail verificado vira pendência:
+        # o perfil não é excluído por causa dela.
+        assert contagem["exclusoes_solicitadas"] == 1
+        assert contagem["exclusoes_pendentes"] == 1
+        assert contagem["excluidos"] == 0
+        assert contagem["publicados"] == 1  # o cadastro em si segue a regra normal
+
+    def test_exclusao_prevalece_sobre_status_aprovado(self):
+        _, contagem, *_ = montar([
+            linha(status="APROVADO", data_aprovacao="05/10/2026",
+                  solicitar_exclusao=EXCLUSAO),
+        ])
+        assert contagem["publicados"] == 0 and contagem["excluidos"] == 1
+
+    def test_contagem_de_perfis_removidos(self):
+        catalogo, *_ = montar([linha()])
+        id_publicado = catalogo["profissionais"][0]["id"]
+        _, contagem, *_ = montar(
+            [linha(solicitar_exclusao=EXCLUSAO)],
+            ids_publicados={"5519999990001": [id_publicado]},
+        )
+        assert contagem["exclusoes_solicitadas"] == 1
+        assert contagem["exclusoes_perfis_removidos"] == 1
+
+    def test_mapa_de_exclusoes_e_pseudonimizado(self):
+        *_, mapa_exclusoes = montar([linha(solicitar_exclusao=EXCLUSAO)])
+        assert list(mapa_exclusoes) == [
+            sync._hmac(SEGREDO_TESTE, "identidade", "maria@exemplo.com")
+        ]
+        assert mapa_exclusoes[sync._hmac(SEGREDO_TESTE, "identidade",
+                                         "maria@exemplo.com")]["desde"] == "2026-10-01"
+
+    def test_dry_run_nao_persiste_exclusao(self, tmp_path):
+        saida, dados_dir = tmp_path / "data", tmp_path / "dados"
+        assert executar(tmp_path, [linha(solicitar_exclusao=EXCLUSAO)]) == 0
+        antes = (dados_dir / "exclusoes.json").read_text(encoding="utf-8")
+        # Simulação com a caixa desmarcada: nada é gravado nem reativado.
+        assert executar(tmp_path, [linha()], "--dry-run") == 0
+        assert (dados_dir / "exclusoes.json").read_text(encoding="utf-8") == antes
+        principal = json.loads((saida / "profissionais.json").read_text(encoding="utf-8"))
+        assert principal["total"] == 0
+
+    def test_falha_posterior_nao_corrompe_catalogo_nem_exclusoes(self, tmp_path):
+        saida, dados_dir = tmp_path / "data", tmp_path / "dados"
+        assert executar(tmp_path, [linha()]) == 0
+        assert executar(tmp_path, [linha(solicitar_exclusao=EXCLUSAO)]) == 0
+        catalogo_apos = (saida / "profissionais.json").read_text(encoding="utf-8")
+        exclusoes_apos = (dados_dir / "exclusoes.json").read_text(encoding="utf-8")
+
+        ruim = tmp_path / "ruim.csv"
+        ruim.write_text("Coluna A,Coluna B\nv1,v2\n", encoding="utf-8")
+        assert sync.main(["--csv", str(ruim), "--saida", str(saida),
+                          "--dir-dados", str(dados_dir), "--id-secret", SEGREDO_TESTE]) == 1
+        assert (saida / "profissionais.json").read_text(encoding="utf-8") == catalogo_apos
+        assert (dados_dir / "exclusoes.json").read_text(encoding="utf-8") == exclusoes_apos
+
+    def test_json_publico_sem_dados_da_exclusao(self, tmp_path):
+        assert executar(tmp_path, [
+            linha(),
+            linha(email_verificado="sai@exemplo.com", nome="Sai do Ar",
+                  whatsapp="19999990002", municipio="Piracicaba",
+                  solicitar_exclusao=EXCLUSAO),
+        ]) == 0
+        texto = (tmp_path / "data" / "profissionais.json").read_text(encoding="utf-8")
+        principal = json.loads(texto)
+        assert principal["total"] == 1  # os demais profissionais permanecem
+        assert "sai@exemplo.com" not in texto and "Sai do Ar" not in texto
+        assert "remoção do meu perfil" not in texto
+        assert "solicitar_exclusao" not in texto
+        assert set(principal["profissionais"][0].keys()) == set(sync.CAMPOS_PUBLICOS)
+
+
+# ---------------------------------------------------------------------------
+# Municípios múltiplos numa única coluna (aba consolidada pelo Apps Script)
+# ---------------------------------------------------------------------------
+
+class TestMunicipiosMultiplos:
+    def test_lista_na_coluna_unica_primeiro_e_principal(self):
+        registro = montar([linha(uf="AC - Acre", outros_municipios="",
+                                 municipio="Acrelândia; Bujari; Cruzeiro do Sul; Xapuri")])[0]["profissionais"][0]
+        assert registro["municipio"] == "Acrelândia"
+        assert registro["municipioSlug"] == "acrelandia"
+        assert registro["outros_municipios"] == ["Bujari", "Cruzeiro do Sul", "Xapuri"]
+        assert registro["estado"] == "Acre"
+
+    def test_municipio_unico_continua_igual(self):
+        registro = montar([linha()])[0]["profissionais"][0]
+        assert registro["municipio"] == "Campinas"
+        assert registro["outros_municipios"] == ["Valinhos"]
+
+    def test_outros_municipios_existentes_sao_fundidos_sem_duplicar(self):
+        registro = montar([linha(municipio="Campinas; Valinhos; Vinhedo",
+                                 outros_municipios="Valinhos; Sumaré")])[0]["profissionais"][0]
+        assert registro["municipio"] == "Campinas"
+        assert registro["outros_municipios"] == ["Valinhos", "Sumaré", "Vinhedo"]
 
 
 # ---------------------------------------------------------------------------
@@ -447,7 +681,7 @@ class TestNormalizacao:
         mapa = sync.mapa_colunas(CABECALHO)
         for chave in sync.COLUNAS_OBRIGATORIAS:
             assert chave in mapa
-        assert mapa["email_verificado"] == 1 and mapa["email_administrativo"] == 12
+        assert mapa["email_verificado"] == 1 and mapa["email_administrativo"] == 13
 
     def test_uf_formato_do_formulario(self):
         assert sync.normalizar_uf("RJ - Rio de Janeiro") == "RJ"
@@ -456,6 +690,20 @@ class TestNormalizacao:
     def test_whatsapp(self):
         assert sync.normalizar_whatsapp("21999999999") == "5521999999999"
         assert sync.normalizar_whatsapp("2122223333") is None
+
+    def test_instagram(self):
+        # Aceitos: com ou sem @, com pontos e sublinhados.
+        for entrada, esperado in [("@maria.silva", "maria.silva"),
+                                  ("profissional_rj", "profissional_rj"),
+                                  ("@empresa123", "empresa123"),
+                                  ("a" * 30, "a" * 30)]:
+            assert sync.normalizar_instagram(entrada) == esperado, entrada
+        # Rejeitados: links, @@, espaços, símbolos, pontos mal posicionados, >30.
+        for entrada in ["https://instagram.com/meuservico",
+                        "www.instagram.com/meuservico", "instagram.com/meuservico",
+                        "@@meuservico", "@usuario com espacos", "usuario!",
+                        ".usuario", "usuario.", "a..b", "a" * 31, ""]:
+            assert sync.normalizar_instagram(entrada) is None, entrada
 
     def test_consentimento_exato(self):
         assert sync.consentimento_valido(CONSENTIMENTO)
@@ -489,8 +737,8 @@ class TestSemRegistros:
         assert valido, erros
 
     def test_aviso_nao_expose_dados_pessoais(self):
-        _, _, avisos, _, _ = montar([linha(whatsapp="1932320000", nome="Fulana Secreta",
-                                           email_verificado="secreto@exemplo.com")])
+        _, _, avisos, _, _, _ = montar([linha(whatsapp="1932320000", nome="Fulana Secreta",
+                                               email_verificado="secreto@exemplo.com")])
         texto = " ".join(avisos)
         assert "Fulana" not in texto and "secreto" not in texto
 
@@ -513,5 +761,7 @@ class TestCatalogoDoRepositorio:
         mapa = sync.mapa_colunas(linhas[0])
         catalogo, contagem, *_ = sync.montar_catalogo(linhas[1:], mapa, SEGREDO_TESTE)
         assert contagem["publicados"] == 1 and contagem["pendentes"] == 1
+        assert contagem["excluidos"] == 1
+        assert catalogo["profissionais"][0]["instagram"] == "maria.silva"
         valido, erros = sync.validar_catalogo({**catalogo, "geradoEm": "2026-10-28T12:00:00Z"})
         assert valido, erros

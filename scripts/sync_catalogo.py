@@ -17,6 +17,17 @@ Decisão por linha:
   - STATUS=REJEITADO/INATIVO ou ATIVO=NÃO .... BLOQUEADO de forma persistente
     (a edição da resposta no Forms não reativa: colunas administrativas permanecem)
 
+Exclusão voluntária (coluna "Solicitar exclusão do perfil"): marcada com a
+frase exata do formulário, nenhuma resposta daquela identidade (e-mail
+verificado colhido pelo Google Forms) é publicada — a solicitação precede
+STATUS=APROVADO e a seleção da resposta vencedora, impedindo que respostas
+antigas da mesma conta republiquem o perfil. O estado persiste em
+`dados/exclusoes.json` (hash HMAC da identidade — nunca o e-mail). Desmarcar
+a caixa NÃO reativa: a reativação é administrativa (remover o hash do arquivo
+e commitar). Solicitação sem e-mail verificado vira pendência administrativa
+e não exclui perfil algum; e-mail administrativo, nome, telefone ou ID
+público informado não autorizam exclusão.
+
 Moderação por exceção — sinais FORTES retêm automaticamente (indício real de
 abuso); sinais FRACOS apenas sinalizam (não retêm profissionais legítimos):
   fortes : sem nenhum e-mail utilizável; link no nome; telefone em 3+ contas.
@@ -47,12 +58,17 @@ from typing import Any
 
 VERSAO_CATALOGO = 1
 ARQUIVO_PRINCIPAL = "profissionais.json"
-ABA_PADRAO = "Respostas ao formulário 1"
+# Aba consolidada pelo Apps Script; a variável de ambiente GOOGLE_SHEET_TAB_NAME
+# (ou a flag --aba) sobrepõe este padrão.
+ABA_PADRAO = "CADASTROS_SINCRONIZADOS"
 
 CONSENTIMENTO_ESPERADO = (
     "li as informacoes sobre o uso dos meus dados pessoais e autorizo "
     "a divulgacao publica dos dados profissionais indicados"
 )
+
+# Frase exata da caixa de seleção "Solicitar exclusão do perfil" no formulário.
+TEXTO_EXCLUSAO_ESPERADO = "solicito a remocao do meu perfil do catalogo publico"
 
 TELEFONE_COMPARTILHADO_LIMITE = 3      # sinal FORTE
 TAMANHO_DESCRICAO_FRACA = 15           # sinal FRACO (não retém)
@@ -72,7 +88,7 @@ UFS = {
 CAMPOS_PUBLICOS = (
     "id", "nome", "categoria", "categoriaSlug", "profissao", "descricao",
     "uf", "estado", "municipio", "municipioSlug", "bairros",
-    "outros_municipios", "atendimento_remoto", "whatsapp", "atualizadoEm",
+    "outros_municipios", "atendimento_remoto", "whatsapp", "instagram", "atualizadoEm",
 )
 
 # Chaves que JAMAIS podem aparecer em um registro público.
@@ -87,6 +103,9 @@ CHAVES_PROIBIDAS = {
 }
 
 REGEX_WHATSAPP = re.compile(r"^55[1-9][0-9]9[0-9]{8}$")
+# Entrada aceita "@" opcional; a forma pública canônica é sem "@".
+REGEX_INSTAGRAM = re.compile(r"^@?([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)$")
+REGEX_INSTAGRAM_PUBLICADO = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*$")
 REGEX_ID = re.compile(r"^[a-z0-9-]{4,64}$")
 REGEX_DATA = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 REGEX_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -111,10 +130,13 @@ COLUNAS: dict[str, tuple[str, ...]] = {
     "remoto": ("atendimento remoto", "remoto", "atende remoto"),
     "whatsapp": ("whatsapp", "whatsapp profissional", "numero whatsapp",
                  "numero de whatsapp", "zap"),
+    "instagram": ("instagram (@)", "instagram", "usuario do instagram"),
     "email_administrativo": ("email administrativo", "e-mail administrativo"),
     "endereco": ("endereco comercial", "endereco"),
     "consentimento": ("consentimento para publicacao", "consentimento publicacao",
                       "consentimento", "autorizacao", "autorizo a publicacao"),
+    "solicitar_exclusao": ("solicitar exclusao do perfil", "solicitar exclusao",
+                           "exclusao do perfil", "pedir exclusao do perfil"),
     "id": ("id publico", "id", "identificador", "identificador unico"),
     "status": ("status", "situacao"),
     "data_aprovacao": ("data de aprovacao", "data aprovacao", "data_aprovacao", "aprovado em"),
@@ -199,6 +221,24 @@ def normalizar_whatsapp(valor: str) -> str | None:
     return "55" + digitos
 
 
+def normalizar_instagram(valor: str) -> str | None:
+    """Nome de usuário do Instagram sem "@" (forma pública canônica), ou None.
+
+    Aceita com ou sem "@" inicial. Rejeita links, espaços e outros caracteres
+    especiais, pontos consecutivos, ponto no início/fim e identificadores com
+    mais de 30 caracteres — as mesmas regras da validação do Google Forms.
+    O catálogo guarda somente o identificador; o link é montado pelo site.
+    """
+    texto = limpar_celula(valor)
+    if not texto:
+        return None
+    correspondencia = REGEX_INSTAGRAM.match(texto)
+    if not correspondencia:
+        return None
+    usuario = correspondencia.group(1)
+    return usuario if len(usuario) <= 30 else None
+
+
 def afirmativo(valor: str) -> bool:
     texto = normalizar_texto(valor)
     return bool(
@@ -217,6 +257,19 @@ def consentimento_valido(valor: str) -> bool:
     if texto == CONSENTIMENTO_ESPERADO.rstrip("."):
         return True
     return texto.startswith("sim, autorizo") or texto.startswith("autorizo a publicacao")
+
+
+def exclusao_solicitada(valor: str) -> bool:
+    """Somente a frase exata do formulário, normalizada, autoriza a exclusão
+    voluntária — qualquer outro texto não vazio é ignorado (com aviso)."""
+    return normalizar_texto(valor).rstrip(".") == TEXTO_EXCLUSAO_ESPERADO
+
+
+def identidade_exclusao(dados: dict[str, str]) -> str:
+    """Identidade que autoriza exclusão: SOMENTE o e-mail verificado coletado
+    pelo Google Forms. Nome, WhatsApp, profissão, município, e-mail
+    administrativo ou ID público informado não autorizam exclusão."""
+    return normalizar_email(dados.get("email_verificado", ""))
 
 
 def parse_data(valor: str) -> date | None:
@@ -438,8 +491,21 @@ def processar_linha(
     # --- Validações essenciais (registro inválido nunca publica) ---
     email = identidade_email(dados)
     whatsapp = normalizar_whatsapp(dados.get("whatsapp", ""))
+    instagram = normalizar_instagram(dados.get("instagram", ""))
+    if dados.get("instagram", "") and instagram is None:
+        avisar("instagram inválido — campo ignorado (aceita apenas @usuario)")
     uf = normalizar_uf(dados.get("uf", ""))
-    municipio = dados.get("municipio", "")[:120]
+    # A aba consolidada traz os municípios numa única coluna separada por ";"
+    # (ex.: "Acrelândia; Bujari"): o primeiro é o município principal e os
+    # demais entram como "outros municípios atendidos" — a lista inteira nunca
+    # é tratada como um único município.
+    municipios = dividir_lista(dados.get("municipio", ""))
+    municipio = (municipios[0] if municipios else "")[:120]
+    outros_municipios = dividir_lista(dados.get("outros_municipios", ""))
+    for cidade in municipios[1:]:
+        if cidade.lower() not in {m.lower() for m in outros_municipios}:
+            outros_municipios.append(cidade)
+    outros_municipios = outros_municipios[:15]
     nome = dados.get("nome", "")[:160]
     categoria = dados.get("categoria", "")[:120]
     profissao = dados.get("profissao", "")[:120]
@@ -499,9 +565,10 @@ def processar_linha(
         "municipio": municipio,
         "municipioSlug": municipio_slug,
         "bairros": dividir_lista(dados.get("bairros", "")),
-        "outros_municipios": dividir_lista(dados.get("outros_municipios", "")),
+        "outros_municipios": outros_municipios,
         "atendimento_remoto": afirmativo(dados.get("remoto", "")),
         "whatsapp": whatsapp,
+        "instagram": instagram,
         "atualizadoEm": data_referencia.isoformat(),
     }
     return registro, "publicado", vinculo
@@ -521,18 +588,24 @@ def montar_catalogo(
     segredo: str,
     mapa_identidades: dict[str, str] | None = None,
     ids_publicados_por_telefone: dict[str, list[str]] | None = None,
-) -> tuple[dict[str, Any], dict[str, int], list[str], dict[str, str], dict[str, list[dict[str, Any]]]]:
-    """Retorna (catálogo, contagem, avisos, mapa de identidades, eventos de moderação)."""
+    mapa_exclusoes: dict[str, dict[str, str]] | None = None,
+) -> tuple[dict[str, Any], dict[str, int], list[str], dict[str, str],
+           dict[str, list[dict[str, Any]]], dict[str, dict[str, str]]]:
+    """Retorna (catálogo, contagem, avisos, mapa de identidades, eventos de
+    moderação, mapa de exclusões voluntárias)."""
     mapa_identidades = dict(mapa_identidades or {})
     ids_publicados_por_telefone = ids_publicados_por_telefone or {}
+    mapa_exclusoes = dict(mapa_exclusoes or {})
     avisos: list[str] = []
     eventos: dict[str, list[dict[str, Any]]] = {
         "retidos": [], "pendentes": [], "bloqueados": [],
-        "invalidos": [], "sinais_fracos": [],
+        "invalidos": [], "sinais_fracos": [], "exclusoes_pendentes": [],
     }
     contagem = {
         "linhas": 0, "publicados": 0, "retidos": 0, "pendentes": 0,
         "bloqueados": 0, "invalidos": 0, "duplicados": 0,
+        "exclusoes_solicitadas": 0, "exclusoes_perfis_removidos": 0,
+        "exclusoes_pendentes": 0, "excluidos": 0,
     }
 
     todas = []
@@ -541,6 +614,43 @@ def montar_catalogo(
         if not any(dados.values()):
             continue
         todas.append((indice, indice + 2, dados))
+
+    # Pré-passo: solicitações de exclusão voluntária. Registram-se por
+    # identidade (hash HMAC do e-mail verificado) ANTES da seleção da
+    # resposta vencedora — assim nenhuma resposta antiga da mesma conta
+    # consegue republicar o perfil. A supressão persiste entre execuções
+    # (dados/exclusoes.json) e desmarcar a caixa não a desfaz.
+    for _, numero_linha, dados in todas:
+        valor_exclusao = dados.get("solicitar_exclusao", "")
+        if not valor_exclusao:
+            continue
+        if not exclusao_solicitada(valor_exclusao):
+            avisos.append(
+                f"linha {numero_linha}: valor não reconhecido em "
+                "'Solicitar exclusão do perfil' — ignorado"
+            )
+            continue
+        contagem["exclusoes_solicitadas"] += 1
+        email_exclusao = identidade_exclusao(dados)
+        if not email_exclusao:
+            contagem["exclusoes_pendentes"] += 1
+            avisos.append(
+                f"linha {numero_linha}: exclusão solicitada sem e-mail verificado — "
+                "pendência administrativa (nenhum perfil foi excluído)"
+            )
+            eventos["exclusoes_pendentes"].append(
+                {"linha": numero_linha, "motivo": "solicitação sem e-mail verificado"}
+            )
+            continue
+        hash_exclusao = _hmac(segredo, "identidade", email_exclusao)
+        if hash_exclusao not in mapa_exclusoes:
+            data_exclusao = (
+                parse_data(dados.get("data_atualizacao", ""))
+                or parse_data(dados.get("data_aprovacao", ""))
+                or parse_data(dados.get("timestamp", ""))
+                or date.today()
+            )
+            mapa_exclusoes[hash_exclusao] = {"desde": data_exclusao.isoformat()}
 
     # Pré-passo: contas distintas por telefone (sinal forte).
     contas_por_telefone: dict[str, set[str]] = {}
@@ -552,9 +662,25 @@ def montar_catalogo(
 
     por_id: dict[str, tuple[dict[str, Any], tuple]] = {}
     por_email: dict[str, tuple[dict[str, Any], tuple]] = {}
+    ids_publicados_todos = {i for ids in ids_publicados_por_telefone.values() for i in ids}
+    removidos_por_exclusao: set[str] = set()
 
     for indice, numero_linha, dados in todas:
         contagem["linhas"] += 1
+
+        # Exclusão voluntária vigente: nenhuma resposta desta identidade
+        # publica — precede STATUS, sinais de moderação e deduplicação.
+        email = identidade_email(dados)
+        if email and _hmac(segredo, "identidade", email) in mapa_exclusoes:
+            contagem["excluidos"] += 1
+            id_suprimido, _ = resolver_id_publico(
+                dados, email, normalizar_whatsapp(dados.get("whatsapp", "")) or "",
+                segredo, mapa_identidades, ids_publicados_por_telefone,
+            )
+            if id_suprimido in ids_publicados_todos:
+                removidos_por_exclusao.add(id_suprimido)
+            continue
+
         whatsapp_normalizado = normalizar_whatsapp(dados.get("whatsapp", ""))
         telefone_contas = len(contas_por_telefone.get(whatsapp_normalizado, set())) \
             if whatsapp_normalizado else 0
@@ -616,6 +742,7 @@ def montar_catalogo(
     profissionais = [valor[0] for valor in por_combinacao.values()]
     profissionais.sort(key=lambda r: (normalizar_texto(r["nome"]), r["municipioSlug"], r["id"]))
     contagem["publicados"] = len(profissionais)
+    contagem["exclusoes_perfis_removidos"] = len(removidos_por_exclusao)
 
     catalogo: dict[str, Any] = {
         "versao": VERSAO_CATALOGO,
@@ -624,7 +751,7 @@ def montar_catalogo(
         "profissionais": [{campo: registro[campo] for campo in CAMPOS_PUBLICOS}
                           for registro in profissionais],
     }
-    return catalogo, contagem, avisos, mapa_identidades, eventos
+    return catalogo, contagem, avisos, mapa_identidades, eventos, mapa_exclusoes
 
 
 # ---------------------------------------------------------------------------
@@ -681,6 +808,14 @@ def validar_catalogo(dados: Any) -> tuple[bool, list[str]]:
         whatsapp = item.get("whatsapp", "")
         if not isinstance(whatsapp, str) or not REGEX_WHATSAPP.match(whatsapp):
             erros.append(f"{prefixo}: 'whatsapp' fora do formato 55DDD9XXXXXXXX")
+        instagram = item.get("instagram")
+        if instagram is not None and (
+            not isinstance(instagram, str)
+            or len(instagram) > 30
+            or not REGEX_INSTAGRAM_PUBLICADO.match(instagram)
+        ):
+            erros.append(f"{prefixo}: 'instagram' deve ser null ou nome de usuário "
+                         f"válido (sem @, até 30 caracteres)")
         atualizado = item.get("atualizadoEm", "")
         if not isinstance(atualizado, str) or not REGEX_DATA.match(atualizado):
             erros.append(f"{prefixo}: 'atualizadoEm' fora do formato AAAA-MM-DD")
@@ -784,6 +919,36 @@ def salvar_mapa_identidades(diretorio_dados: Path, mapa: dict[str, str]) -> bool
     return True
 
 
+def carregar_exclusoes(diretorio_dados: Path) -> dict[str, dict[str, str]]:
+    """Mapa persistente de exclusões voluntárias: hash HMAC da identidade ->
+    {"desde": data}. Pseudonimizado — nunca contém e-mail em texto puro."""
+    caminho = diretorio_dados / "exclusoes.json"
+    if not caminho.exists():
+        return {}
+    try:
+        dados = json.loads(caminho.read_text(encoding="utf-8"))
+        mapa = dados.get("mapa", {})
+        return {
+            str(chave): (valor if isinstance(valor, dict) else {"desde": ""})
+            for chave, valor in mapa.items()
+        }
+    except (json.JSONDecodeError, OSError, AttributeError):
+        return {}
+
+
+def salvar_exclusoes(diretorio_dados: Path, mapa: dict[str, dict[str, str]]) -> bool:
+    """Grava o estado de exclusões quando muda (escrita atômica). Reativar um
+    perfil é procedimento administrativo: remova o hash deste arquivo e faça
+    commit — desmarcar a caixa no formulário não reativa por si só."""
+    caminho = diretorio_dados / "exclusoes.json"
+    if carregar_exclusoes(diretorio_dados) == mapa:
+        return False
+    conteudo = {"versao": 1, "mapa": dict(sorted(mapa.items()))}
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    escrever_atomico(caminho, json.dumps(conteudo, ensure_ascii=False, indent=2) + "\n")
+    return True
+
+
 def escrever_relatorio_moderacao(
     diretorio_dados: Path,
     modo: str,
@@ -805,6 +970,13 @@ def escrever_relatorio_moderacao(
             "bloqueados": eventos.get("bloqueados", []),
             "invalidos": eventos.get("invalidos", []),
             "sinaisFracosPublicados": eventos.get("sinais_fracos", []),
+            "exclusoesVoluntarias": {
+                "solicitadas": contagem.get("exclusoes_solicitadas", 0),
+                "perfisRemovidos": contagem.get("exclusoes_perfis_removidos", 0),
+                "pendentesIdentidade": contagem.get("exclusoes_pendentes", 0),
+                "perfisAtivosAposSincronizacao": contagem.get("publicados", 0),
+            },
+            "exclusoesPendentes": eventos.get("exclusoes_pendentes", []),
         }
         escrever_atomico(caminho, json.dumps(relatorio, ensure_ascii=False, indent=2) + "\n")
         return caminho
@@ -825,7 +997,8 @@ def _sem_gerado_em(dados: dict[str, Any]) -> dict[str, Any]:
 
 
 def salvar_catalogo(diretorio: Path, catalogo: dict[str, Any],
-                     diretorio_dados: Path, mapa_identidades: dict[str, str]) -> bool:
+                    diretorio_dados: Path, mapa_identidades: dict[str, str],
+                    mapa_exclusoes: dict[str, dict[str, str]] | None = None) -> bool:
     caminho_principal = diretorio / ARQUIVO_PRINCIPAL
 
     atual: dict[str, Any] | None = None
@@ -837,6 +1010,7 @@ def salvar_catalogo(diretorio: Path, catalogo: dict[str, Any],
 
     if atual is not None and _sem_gerado_em(atual) == _sem_gerado_em(catalogo):
         salvar_mapa_identidades(diretorio_dados, mapa_identidades)
+        salvar_exclusoes(diretorio_dados, mapa_exclusoes or {})
         return False
 
     catalogo["geradoEm"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -868,6 +1042,7 @@ def salvar_catalogo(diretorio: Path, catalogo: dict[str, Any],
             existente.unlink()
 
     salvar_mapa_identidades(diretorio_dados, mapa_identidades)
+    salvar_exclusoes(diretorio_dados, mapa_exclusoes or {})
     return True
 
 
@@ -953,10 +1128,11 @@ def main(argv: list[str] | None = None) -> int:
     diretorio = Path(args.saida)
     diretorio_dados = Path(args.dir_dados)
     mapa_identidades = carregar_mapa_identidades(diretorio_dados)
+    mapa_exclusoes = carregar_exclusoes(diretorio_dados)
     ids_publicados = carregar_ids_publicados(diretorio)
 
-    catalogo, contagem, avisos, mapa_atualizado, eventos = montar_catalogo(
-        linhas[1:], mapa, segredo, mapa_identidades, ids_publicados
+    catalogo, contagem, avisos, mapa_atualizado, eventos, mapa_exclusoes = montar_catalogo(
+        linhas[1:], mapa, segredo, mapa_identidades, ids_publicados, mapa_exclusoes
     )
 
     catalogo_teste = dict(catalogo)
@@ -974,6 +1150,12 @@ def main(argv: list[str] | None = None) -> int:
         f"retidos (suspeitos): {contagem['retidos']} | pendentes: {contagem['pendentes']} | "
         f"bloqueados: {contagem['bloqueados']} | inválidos: {contagem['invalidos']} | "
         f"duplicados: {contagem['duplicados']}"
+    )
+    print(
+        f"  exclusões voluntárias: {contagem['exclusoes_solicitadas']} solicitada(s) | "
+        f"perfis removidos: {contagem['exclusoes_perfis_removidos']} | "
+        f"pendentes (sem identidade confiável): {contagem['exclusoes_pendentes']} | "
+        f"perfis ativos após a sincronização: {contagem['publicados']}"
     )
 
     comparacao = comparar_com_atual(diretorio, catalogo)
@@ -1013,7 +1195,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        mudou = salvar_catalogo(diretorio, catalogo, diretorio_dados, mapa_atualizado)
+        mudou = salvar_catalogo(diretorio, catalogo, diretorio_dados, mapa_atualizado,
+                                mapa_exclusoes)
     except (OSError, ValueError) as erro:
         print(f"FALHA ao gravar os arquivos: {erro}", file=sys.stderr)
         return 1

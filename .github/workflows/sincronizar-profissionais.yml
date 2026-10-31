@@ -53,7 +53,10 @@ jobs:
         env:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID || vars.GOOGLE_SHEET_ID }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_SHEET_TAB_NAME: ${{ vars.GOOGLE_SHEET_TAB_NAME || 'Respostas ao formulário 1' }}
+          # Aba consolidada pelo Apps Script. A variável de repositório
+          # GOOGLE_SHEET_TAB_NAME (Settings > Secrets and variables > Actions >
+          # Variables), se definida, PREVALECE sobre o padrão abaixo.
+          GOOGLE_SHEET_TAB_NAME: ${{ vars.GOOGLE_SHEET_TAB_NAME || 'CADASTROS_SINCRONIZADOS' }}
           PUBLIC_ID_SECRET: ${{ secrets.PUBLIC_ID_SECRET }}
         run: |
           if [ "${{ steps.modo.outputs.gravar }}" = "true" ]; then
@@ -105,10 +108,12 @@ jobs:
         if: steps.modo.outputs.gravar == 'true'
         id: mudancas
         run: |
-          if git diff --quiet -- public/data dados/identidades.json; then
-            echo "houve=false" >> "$GITHUB_OUTPUT"
-          else
+          # --porcelain (em vez de git diff) também enxerga arquivos novos,
+          # como dados/exclusoes.json na primeira exclusão registrada.
+          if git status --porcelain -- public/data dados/identidades.json dados/exclusoes.json | grep -q .; then
             echo "houve=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "houve=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Commitar
@@ -118,6 +123,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add public/data
           git add dados/identidades.json 2>/dev/null || true
+          git add dados/exclusoes.json 2>/dev/null || true
           git commit -m "chore(sync): atualizar profissionais ($(date -u '+%Y-%m-%d %H:%M') UTC)"
           git push
 
