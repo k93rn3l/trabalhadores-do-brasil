@@ -36,6 +36,9 @@ abuso); sinais FRACOS apenas sinalizam (não retêm profissionais legítimos):
 Relatório de moderação: `dados/relatorio-moderacao.json` (sem dados pessoais —
 apenas linha, motivo e contagens) gerado em toda execução, para consulta da
 fila de retidos/bloqueios sem backend e sem permissão de escrita na planilha.
+O bloqueio é diferenciado por origem (STATUS=REJEITADO, STATUS=INATIVO e
+ATIVO=NÃO); valores administrativos desconhecidos (STATUS ou ATIVO fora do
+menu) ficam retidos como pendência — nunca interpretados como aprovação.
 
 Mapa de identidades: `dados/identidades.json` (hash->id; pseudonimizado),
 versionado junto com o catálogo para garantir IDs estáveis entre execuções.
@@ -98,6 +101,8 @@ CHAVES_PROIBIDAS = {
     "endereco", "enderecoComercial", "endereco_comercial",
     "observacoes", "observacoesInternas", "observacoes_internas",
     "status", "ativo", "consentimento", "consentimento_para_publicacao",
+    "solicitar_exclusao", "solicitarExclusao",
+    "id_resposta_form", "idRespostaForm",
     "id_publico", "timestamp", "carimbo", "data_aprovacao", "dataAprovacao",
     "data_atualizacao", "credenciais", "google", "identidade",
 }
@@ -141,9 +146,14 @@ COLUNAS: dict[str, tuple[str, ...]] = {
     "status": ("status", "situacao"),
     "data_aprovacao": ("data de aprovacao", "data aprovacao", "data_aprovacao", "aprovado em"),
     "data_atualizacao": ("ultima atualizacao", "data da ultima atualizacao",
-                         "data_atualizacao", "atualizado em"),
+                         "data_atualizacao", "data atualizacao",
+                         "data de atualizacao", "atualizado em"),
     "observacoes": ("observacoes internas", "observacoes", "notas"),
     "ativo": ("ativo", "cadastro ativo", "situacao de atividade", "atividade"),
+    # Coluna da aba consolidada gerada pelo Apps Script: identificada para
+    # leitura, mas PRIVADA — jamais entra no catálogo público (allowlist).
+    "id_resposta_form": ("id resposta form", "id da resposta",
+                         "resposta do formulario"),
 }
 
 COLUNAS_OBRIGATORIAS = ("timestamp", "nome", "categoria", "profissao", "descricao",
@@ -427,6 +437,23 @@ def ativo_bloqueia(valor: str) -> bool:
     return texto.startswith("nao") or texto in {"inativo", "false", "0", "n"}
 
 
+def classificar_ativo(valor: str) -> str:
+    """-> 'ok' | 'bloqueado' | 'desconhecido'.
+
+    Vazio ou SIM não bloqueiam; NÃO bloqueia; qualquer outro valor (menu
+    suspenso só tem SIM/NÃO) é administrativamente inválido: retido como
+    pendência, nunca tratado como aprovação.
+    """
+    texto = normalizar_texto(valor)
+    if not texto:
+        return "ok"
+    if ativo_bloqueia(valor):
+        return "bloqueado"
+    if texto in {"sim", "s", "true", "1", "x", "ok"} or texto.startswith("sim"):
+        return "ok"
+    return "desconhecido"
+
+
 def motivos_suspeita(dados: dict[str, str], telefone_contas: int) -> list[str]:
     """Sinais FORTES: indício real de abuso/impersonação — retêm o registro.
     Filtros automáticos não garantem ausência de fraudes; são apenas triagem."""
@@ -475,15 +502,33 @@ def processar_linha(
         return None, "vazia", None
 
     situacao = classificar_status(dados.get("status", ""))
-    if situacao == "bloqueado" or ativo_bloqueia(dados.get("ativo", "")):
-        motivo = "STATUS=" + (dados.get("status", "").strip().upper() or "?")
-        if ativo_bloqueia(dados.get("ativo", "")):
-            motivo = "ATIVO=NÃO"
-        eventos["bloqueados"].append({"linha": numero_linha, "motivo": motivo})
+    situacao_ativo = classificar_ativo(dados.get("ativo", ""))
+
+    # Bloqueio persistente, diferenciado por origem no relatório:
+    # ATIVO=NÃO prevalece como motivo (bloqueia independente do STATUS).
+    if situacao == "bloqueado" or situacao_ativo == "bloqueado":
+        if situacao_ativo == "bloqueado":
+            tipo, motivo = "bloqueados_ativo", "ATIVO=NÃO"
+        elif dados.get("status", "").strip().upper() == "INATIVO":
+            tipo, motivo = "inativos", "STATUS=INATIVO"
+        else:
+            tipo, motivo = "rejeitados", "STATUS=REJEITADO"
+        evento = {"linha": numero_linha, "motivo": motivo, "tipo": tipo}
+        eventos["bloqueados"].append(evento)
+        eventos[tipo].append(evento)
         return None, "bloqueado", None  # edição do Forms não reativa
 
-    if situacao == "pendente":
-        motivo = "STATUS=PENDENTE" if dados.get("status", "").strip() else "STATUS desconhecido"
+    # Retenção manual — inclusive valores administrativos desconhecidos,
+    # que nunca são interpretados como aprovação.
+    if situacao == "pendente" or situacao_ativo == "desconhecido":
+        if situacao_ativo == "desconhecido":
+            motivo = "ATIVO com valor desconhecido (" + \
+                limpar_celula(dados.get("ativo", ""))[:20] + ")"
+        elif dados.get("status", "").strip().upper() == "PENDENTE":
+            motivo = "STATUS=PENDENTE"
+        else:
+            motivo = "STATUS desconhecido (" + \
+                limpar_celula(dados.get("status", ""))[:40] + ")"
         avisar(f"retido: {motivo} (revisão manual)")
         eventos["pendentes"].append({"linha": numero_linha, "motivo": motivo})
         return None, "pendente", None
@@ -599,6 +644,7 @@ def montar_catalogo(
     avisos: list[str] = []
     eventos: dict[str, list[dict[str, Any]]] = {
         "retidos": [], "pendentes": [], "bloqueados": [],
+        "rejeitados": [], "inativos": [], "bloqueados_ativo": [],
         "invalidos": [], "sinais_fracos": [], "exclusoes_pendentes": [],
     }
     contagem = {
@@ -743,6 +789,10 @@ def montar_catalogo(
     profissionais.sort(key=lambda r: (normalizar_texto(r["nome"]), r["municipioSlug"], r["id"]))
     contagem["publicados"] = len(profissionais)
     contagem["exclusoes_perfis_removidos"] = len(removidos_por_exclusao)
+    # Bloqueios diferenciados por origem (o total continua em "bloqueados").
+    contagem["rejeitados"] = len(eventos["rejeitados"])
+    contagem["inativos"] = len(eventos["inativos"])
+    contagem["bloqueados_por_ativo"] = len(eventos["bloqueados_ativo"])
 
     catalogo: dict[str, Any] = {
         "versao": VERSAO_CATALOGO,
@@ -968,6 +1018,9 @@ def escrever_relatorio_moderacao(
             "retidosParaRevisao": eventos.get("retidos", []),
             "pendentesManuais": eventos.get("pendentes", []),
             "bloqueados": eventos.get("bloqueados", []),
+            "rejeitados": eventos.get("rejeitados", []),
+            "inativos": eventos.get("inativos", []),
+            "bloqueadosPorAtivo": eventos.get("bloqueados_ativo", []),
             "invalidos": eventos.get("invalidos", []),
             "sinaisFracosPublicados": eventos.get("sinais_fracos", []),
             "exclusoesVoluntarias": {
@@ -1148,8 +1201,10 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"  linhas lidas: {contagem['linhas']} | a publicar: {contagem['publicados']} | "
         f"retidos (suspeitos): {contagem['retidos']} | pendentes: {contagem['pendentes']} | "
-        f"bloqueados: {contagem['bloqueados']} | inválidos: {contagem['invalidos']} | "
-        f"duplicados: {contagem['duplicados']}"
+        f"bloqueados: {contagem['bloqueados']} "
+        f"(rejeitados: {contagem['rejeitados']} | inativos: {contagem['inativos']} | "
+        f"ATIVO=NÃO: {contagem['bloqueados_por_ativo']}) | "
+        f"inválidos: {contagem['invalidos']} | duplicados: {contagem['duplicados']}"
     )
     print(
         f"  exclusões voluntárias: {contagem['exclusoes_solicitadas']} solicitada(s) | "

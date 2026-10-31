@@ -45,6 +45,7 @@ COLUNAS_MODELO = [
     ("DATA_ATUALIZACAO", "data_atualizacao"),
     ("OBSERVACOES_INTERNAS", "observacoes"),
     (" Solicitar exclusão do perfil ", "solicitar_exclusao"),
+    ("ID_RESPOSTA_FORM", "id_resposta_form"),
 ]
 CABECALHO = [titulo for titulo, _ in COLUNAS_MODELO]
 
@@ -77,6 +78,7 @@ PADRAO = {
     "observacoes": "anotacao interna sensivel",
     "ativo": "",
     "solicitar_exclusao": "",
+    "id_resposta_form": "",
 }
 
 
@@ -535,6 +537,119 @@ class TestMunicipiosMultiplos:
 
 
 # ---------------------------------------------------------------------------
+# Matriz administrativa: STATUS × ATIVO (a exclusão voluntária vem depois
+# e prevalece sobre todas as combinações)
+# ---------------------------------------------------------------------------
+
+class TestMatrizStatusAtivo:
+    @pytest.mark.parametrize("status,ativo,esperado", [
+        ("", "", "publicado"),          # publicação automática
+        ("", "SIM", "publicado"),
+        ("", "NÃO", "bloqueado"),
+        ("APROVADO", "", "publicado"),
+        ("APROVADO", "SIM", "publicado"),
+        ("APROVADO", "NÃO", "bloqueado"),  # ATIVO=NÃO vence a aprovação
+        ("PENDENTE", "", "pendente"),
+        ("PENDENTE", "SIM", "pendente"),
+        ("PENDENTE", "NÃO", "bloqueado"),
+        ("REJEITADO", "SIM", "bloqueado"),
+        ("REJEITADO", "NÃO", "bloqueado"),
+        ("INATIVO", "SIM", "bloqueado"),
+        ("INATIVO", "NÃO", "bloqueado"),
+        ("QUALQUER", "", "pendente"),        # STATUS desconhecido: retido
+        ("APROVADO", "TALVEZ", "pendente"),  # ATIVO desconhecido: retido
+    ])
+    def test_combinacao_status_ativo(self, status, ativo, esperado):
+        _, contagem, *_ = montar([linha(status=status, ativo=ativo,
+                                        data_aprovacao="05/10/2026")])
+        assert contagem["publicados"] == (1 if esperado == "publicado" else 0)
+        assert contagem["pendentes"] == (1 if esperado == "pendente" else 0)
+        assert contagem["bloqueados"] == (1 if esperado == "bloqueado" else 0)
+
+    def test_aprovado_nao_contorna_validacoes_essenciais(self):
+        _, contagem, *_ = montar([
+            linha(status="APROVADO", data_aprovacao="05/10/2026",
+                  whatsapp="19 3232-0000"),
+        ])
+        assert contagem["publicados"] == 0 and contagem["invalidos"] == 1
+
+    def test_bloqueio_diferenciado_por_origem_no_relatorio(self):
+        _, contagem, _, _, eventos, _ = montar([
+            linha(email_verificado="a@exemplo.com", whatsapp="19999990011",
+                  status="REJEITADO"),
+            linha(email_verificado="b@exemplo.com", whatsapp="19999990012",
+                  municipio="Sumaré", status="INATIVO"),
+            linha(email_verificado="c@exemplo.com", whatsapp="19999990013",
+                  municipio="Vinhedo", ativo="NÃO"),
+        ])
+        assert contagem["bloqueados"] == 3
+        assert contagem["rejeitados"] == 1
+        assert contagem["inativos"] == 1
+        assert contagem["bloqueados_por_ativo"] == 1
+        assert eventos["rejeitados"][0]["motivo"] == "STATUS=REJEITADO"
+        assert eventos["inativos"][0]["motivo"] == "STATUS=INATIVO"
+        assert eventos["bloqueados_ativo"][0]["motivo"] == "ATIVO=NÃO"
+
+    def test_valores_administrativos_desconhecidos_ficam_retidos(self):
+        _, _, _, _, eventos, _ = montar([
+            linha(email_verificado="a@exemplo.com", whatsapp="19999990011",
+                  status="CONFERIR"),
+            linha(email_verificado="b@exemplo.com", whatsapp="19999990012",
+                  municipio="Sumaré", status="APROVADO", data_aprovacao="05/10/2026",
+                  ativo="TALVEZ"),
+        ])
+        motivos = ";".join(e["motivo"] for e in eventos["pendentes"])
+        assert "STATUS desconhecido (CONFERIR)" in motivos
+        assert "ATIVO com valor desconhecido" in motivos
+
+    @pytest.mark.parametrize("status,ativo", [
+        ("", ""), ("APROVADO", "SIM"), ("PENDENTE", ""),
+        ("REJEITADO", ""), ("INATIVO", ""), ("", "NÃO"), ("APROVADO", "NÃO"),
+    ])
+    def test_exclusao_prevalece_sobre_todas_as_combinacoes(self, status, ativo):
+        # A supressão por identidade ocorre antes do processamento: a linha
+        # nem chega a ser classificada como aprovada, pendente ou bloqueada.
+        _, contagem, *_ = montar([
+            linha(status=status, ativo=ativo, data_aprovacao="05/10/2026",
+                  solicitar_exclusao=EXCLUSAO),
+        ])
+        assert contagem["publicados"] == 0
+        assert contagem["excluidos"] == 1
+
+    @pytest.mark.parametrize("status", ["REJEITADO", "INATIVO"])
+    def test_rejeitado_ou_inativo_remove_perfil_publicado(self, status, tmp_path):
+        saida = tmp_path / "data"
+        assert executar(tmp_path, [linha()]) == 0
+        principal = json.loads((saida / "profissionais.json").read_text(encoding="utf-8"))
+        assert principal["total"] == 1
+
+        assert executar(tmp_path, [linha(status=status)]) == 0
+        principal = json.loads((saida / "profissionais.json").read_text(encoding="utf-8"))
+        assert principal["total"] == 0  # removido do catálogo público
+        assert not (saida / "uf" / "sp.json").exists()
+
+    def test_id_resposta_form_e_privado(self, tmp_path):
+        assert executar(tmp_path, [linha(id_resposta_form="resp-secreta-001")]) == 0
+        texto = (tmp_path / "data" / "profissionais.json").read_text(encoding="utf-8")
+        principal = json.loads(texto)
+        assert "resp-secreta-001" not in texto
+        assert "id_resposta_form" not in texto
+        assert set(principal["profissionais"][0].keys()) == set(sync.CAMPOS_PUBLICOS)
+
+        catalogo = montar([linha()])[0]
+        catalogo["profissionais"][0]["id_resposta_form"] = "vazamento"
+        assert not sync.validar_catalogo(
+            {**catalogo, "geradoEm": "2026-10-28T12:00:00Z"})[0]
+
+    def test_instagram_exige_consentimento_valido(self):
+        _, contagem, *_ = montar([
+            linha(instagram="@maria.silva", consentimento="concordo com tudo"),
+        ])
+        # Sem consentimento válido nada publica — o campo Instagram incluso.
+        assert contagem["publicados"] == 0 and contagem["invalidos"] == 1
+
+
+# ---------------------------------------------------------------------------
 # 5. Privacidade: allowlist estrita
 # ---------------------------------------------------------------------------
 
@@ -682,6 +797,17 @@ class TestNormalizacao:
         for chave in sync.COLUNAS_OBRIGATORIAS:
             assert chave in mapa
         assert mapa["email_verificado"] == 1 and mapa["email_administrativo"] == 13
+        assert mapa["id_resposta_form"] == len(CABECALHO) - 1
+
+    def test_cabecalho_em_ordem_diferente_mapeia_por_nome(self):
+        # O mapeamento é por cabeçalho normalizado, nunca por posição.
+        deslocamento = 9
+        embaralhado = CABECALHO[deslocamento:] + CABECALHO[:deslocamento]
+        mapa = sync.mapa_colunas(embaralhado)
+        assert set(mapa) == {chave for _, chave in COLUNAS_MODELO}
+        catalogo, contagem, *_ = sync.montar_catalogo(
+            [linha()[deslocamento:] + linha()[:deslocamento]], mapa, SEGREDO_TESTE)
+        assert contagem["publicados"] == 1
 
     def test_uf_formato_do_formulario(self):
         assert sync.normalizar_uf("RJ - Rio de Janeiro") == "RJ"
