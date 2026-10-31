@@ -1175,7 +1175,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         mapa = mapa_colunas(linhas[0])
     except ErroColunas as erro:
-        print(f"FALHA de estrutura: {erro}", file=sys.stderr)
+        print(f"FALHA de estrutura na aba '{args.aba}': {erro}", file=sys.stderr)
+        print(
+            "Cabeçalhos recebidos: "
+            + " | ".join(limpar_celula(titulo) for titulo in linhas[0]),
+            file=sys.stderr,
+        )
         return 1
 
     diretorio = Path(args.saida)
