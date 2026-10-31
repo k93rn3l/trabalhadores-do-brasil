@@ -18,6 +18,7 @@ function profissional(parcial: Partial<Profissional>): Profissional {
     outros_municipios: [],
     atendimento_remoto: false,
     whatsapp: '5519999998888',
+    instagram: null,
     atualizadoEm: '2026-10-01',
     ...parcial,
   };

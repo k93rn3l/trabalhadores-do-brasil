@@ -98,6 +98,8 @@ main { padding: 1rem 0 2.5rem; min-height: 60vh; }
 .botao--whatsapp { background: var(--verde-escuro); border-color: var(--verde-escuro); color: #fff; }
 .botao--whatsapp:hover { background: #043d36; color: #fff; }
 .botao--discreto { background: #fff; }
+.botao--instagram { background: #fff; }
+.botao--instagram svg { color: #c13584; }
 
 /* Formulários */
 .campo { display: flex; flex-direction: column; gap: 0.2rem; flex: 1 1 10rem; min-width: 0; }

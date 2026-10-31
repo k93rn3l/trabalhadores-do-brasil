@@ -7,6 +7,7 @@
  */
 import type { Profissional } from './catalogo-parse';
 import { linkWhatsApp } from './whatsapp';
+import { linkInstagram, normalizarInstagram } from './instagram';
 
 const ESCAPES: Record<string, string> = {
   '&': '&amp;',
@@ -33,12 +34,20 @@ const ICONE_WHATSAPP =
   '<svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">' +
   '<path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2Zm4.5-6.1c-.2-.1-1.4-.7-1.6-.8-.2-.1-.4-.1-.5.1-.2.2-.6.8-.7 1-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4 0-.5.1-.7l.4-.5c.1-.2.1-.3 0-.5l-.7-1.7c-.2-.5-.4-.4-.5-.4h-.5c-.2 0-.5.1-.7.3-.2.3-.9.9-.9 2.2s.9 2.5 1.1 2.7c.1.2 1.8 2.8 4.5 3.9 2.2.9 2.6.7 3.1.7.5 0 1.6-.6 1.8-1.3.2-.6.2-1.2.2-1.3-.1-.2-.2-.2-.4-.3Z"/></svg>';
 
+const ICONE_INSTAGRAM =
+  '<svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" ' +
+  'stroke="currentColor" stroke-width="1.8">' +
+  '<rect x="3" y="3" width="18" height="18" rx="5" /><circle cx="12" cy="12" r="4.2" />' +
+  '<circle cx="17.3" cy="6.7" r="1.2" fill="currentColor" stroke="none" /></svg>';
+
 /**
  * HTML do cartão de profissional. `mensagemWhatsApp` é a mensagem inicial
  * codificada para o link wa.me.
  */
 export function cartaoHTML(p: Profissional, mensagemWhatsApp: string): string {
   const urlPerfil = `/profissional/${encodeURIComponent(p.id)}/`;
+  const instagram = normalizarInstagram(p.instagram);
+  const urlInstagram = instagram ? linkInstagram(instagram) : null;
   const bairros = p.bairros.slice(0, 3);
   const sobraBairros = p.bairros.length - bairros.length;
   const bairrosTexto =
@@ -57,6 +66,7 @@ export function cartaoHTML(p: Profissional, mensagemWhatsApp: string): string {
   <p class="cartao__categoria"><a class="etiqueta etiqueta--categoria" href="/categoria/${p.categoriaSlug}/">${escapeHTML(p.categoria)}</a></p>
   <div class="cartao__acoes">
     <a class="botao botao--whatsapp" href="${linkWhatsApp(p.whatsapp, mensagemWhatsApp)}" target="_blank" rel="noopener noreferrer">${ICONE_WHATSAPP} Conversar no WhatsApp</a>
+    ${instagram && urlInstagram ? `<a class="botao botao--instagram" href="${urlInstagram}" target="_blank" rel="noopener noreferrer" aria-label="Perfil no Instagram (@${escapeHTML(instagram)})">${ICONE_INSTAGRAM} @${escapeHTML(instagram)}</a>` : ''}
     <a class="botao botao--discreto" href="${urlPerfil}">Ver perfil</a>
   </div>
 </article>`;

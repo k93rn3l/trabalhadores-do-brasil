@@ -41,6 +41,19 @@ describe('cartaoHTML', () => {
     expect(html).toContain('Conversar no WhatsApp');
   });
 
+  it('inclui botão do Instagram com link e @usuário quando informado', () => {
+    const html = cartaoHTML(profissionalExemplo, '');
+    expect(html).toContain('https://www.instagram.com/maria.silva/');
+    expect(html).toContain('@maria.silva');
+    expect(html).toContain('botao--instagram');
+  });
+
+  it('omite o botão do Instagram quando o campo é nulo', () => {
+    const html = cartaoHTML({ ...profissionalExemplo, instagram: null }, '');
+    expect(html).not.toContain('instagram.com');
+    expect(html).not.toContain('botao--instagram');
+  });
+
   it('indica atendimento online quando remoto', () => {
     expect(cartaoHTML(profissionalExemplo, '')).not.toContain('Atende online');
     expect(cartaoHTML({ ...profissionalExemplo, atendimento_remoto: true }, '')).toContain('Atende online');

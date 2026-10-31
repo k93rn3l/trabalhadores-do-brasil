@@ -16,6 +16,7 @@ export const profissionalExemplo: Profissional = {
   outros_municipios: ['Valinhos'],
   atendimento_remoto: false,
   whatsapp: '5519999998888',
+  instagram: 'maria.silva',
   atualizadoEm: '2026-10-01',
 };
 
@@ -64,6 +65,31 @@ describe('analisarCatalogo', () => {
   it('rejeita WhatsApp fora do formato internacional', () => {
     const invalido = { ...profissionalExemplo, whatsapp: '21999998888' };
     expect(analisarCatalogo({ versao: 1, geradoEm: null, total: 1, profissionais: [invalido] }).ok).toBe(false);
+  });
+
+  it('aceita instagram ausente ou nulo e normaliza o "@" inicial', () => {
+    const semCampo = { ...profissionalExemplo } as Record<string, unknown>;
+    delete semCampo.instagram;
+    const comNull = { ...profissionalExemplo, instagram: null };
+    const comArroba = { ...profissionalExemplo, instagram: '@maria.silva' };
+
+    for (const registro of [semCampo, comNull]) {
+      const resultado = analisarCatalogo({ versao: 1, geradoEm: null, total: 1, profissionais: [registro] });
+      expect(resultado.ok).toBe(true);
+      if (resultado.ok) expect(resultado.catalogo.profissionais[0]?.instagram).toBeNull();
+    }
+    const resultado = analisarCatalogo({ versao: 1, geradoEm: null, total: 1, profissionais: [comArroba] });
+    expect(resultado.ok).toBe(true);
+    if (resultado.ok) expect(resultado.catalogo.profissionais[0]?.instagram).toBe('maria.silva');
+  });
+
+  it('rejeita instagram fora do formato (links, @@, pontos, acima de 30)', () => {
+    for (const ruim of ['https://instagram.com/maria', '@@maria', '.maria', 'a..b', 'a'.repeat(31)]) {
+      const invalido = { ...profissionalExemplo, instagram: ruim };
+      const resultado = analisarCatalogo({ versao: 1, geradoEm: null, total: 1, profissionais: [invalido] });
+      expect(resultado.ok, ruim).toBe(false);
+      if (!resultado.ok) expect(resultado.erros.some((e) => e.includes('instagram'))).toBe(true);
+    }
   });
 
   it('rejeita UF inexistente e estado incoerente', () => {

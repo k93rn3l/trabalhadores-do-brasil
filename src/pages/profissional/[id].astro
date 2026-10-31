@@ -5,6 +5,7 @@ import Breadcrumbs from '../../components/Breadcrumbs.astro';
 import ListaProfissionais from '../../components/ListaProfissionais.astro';
 import { carregarCatalogo } from '../../lib/catalogo-server';
 import { linkWhatsApp } from '../../lib/whatsapp';
+import { linkInstagram, normalizarInstagram } from '../../lib/instagram';
 import { siteConfig } from '../../config/site';
 import { formatarData } from '../../lib/formato';
 import { montarURLBusca } from '../../lib/busca';
@@ -20,6 +21,8 @@ export function getStaticPaths() {
 const { profissional } = Astro.props;
 const { catalogo } = carregarCatalogo();
 const urlPerfil = Astro.site ? new URL(Astro.url.pathname, Astro.site).href : null;
+const instagram = normalizarInstagram(profissional.instagram);
+const urlInstagram = instagram ? linkInstagram(instagram) : null;
 
 const relacionados = catalogo.profissionais
   .filter((p) => p.categoriaSlug === profissional.categoriaSlug && p.id !== profissional.id)
@@ -34,6 +37,7 @@ const jsonLd = {
   category: profissional.categoria,
   serviceType: profissional.profissao,
   ...(urlPerfil ? { url: urlPerfil } : {}),
+  ...(urlInstagram ? { sameAs: [urlInstagram] } : {}),
   address: {
     '@type': 'PostalAddress',
     addressLocality: profissional.municipio,
@@ -103,6 +107,13 @@ const jsonLd = {
         >
           Conversar no WhatsApp
         </a>
+        {
+          urlInstagram && (
+            <a class="botao botao--instagram" href={urlInstagram} target="_blank" rel="noopener noreferrer">
+              Instagram{instagram ? `: @${instagram}` : ''}
+            </a>
+          )
+        }
         <button type="button" class="botao botao--discreto" data-botao-compartilhar>
           Compartilhar perfil
         </button>

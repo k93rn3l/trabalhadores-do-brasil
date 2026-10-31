@@ -4,10 +4,12 @@
  * Contrato público definido na integração (scripts/sync_catalogo.py gera
  * por allowlist): id, nome, categoria, categoriaSlug, profissao, descricao,
  * uf, estado, municipio, municipioSlug, bairros, outros_municipios,
- * atendimento_remoto, whatsapp, atualizadoEm. Nada além disso existe aqui —
- * e-mails, endereço comercial e observações internas jamais são exportados.
+ * atendimento_remoto, whatsapp, instagram (opcional), atualizadoEm. Nada
+ * além disso existe aqui — e-mails, endereço comercial e observações
+ * internas jamais são exportados.
  */
 import { UFS, NOMES_POR_UF, type UF } from './estados';
+import { normalizarInstagram } from './instagram';
 
 export interface Profissional {
   /** Identificador público estável (HMAC; não expõe dados privados). */
@@ -30,6 +32,8 @@ export interface Profissional {
   atendimento_remoto: boolean;
   /** WhatsApp normalizado no formato 55DDD9XXXXXXXX. */
   whatsapp: string;
+  /** Nome de usuário do Instagram (sem "@"), quando informado. */
+  instagram: string | null;
   /** Data de atualização pública (YYYY-MM-DD). */
   atualizadoEm: string;
 }
@@ -130,6 +134,7 @@ export function analisarCatalogo(dados: unknown): ResultadoAnalise {
     }
 
     const p = item as unknown as Profissional;
+    const instagram = normalizarInstagram(item.instagram);
 
     if (itemValido) {
       if (!REGEX_ID.test(p.id)) {
@@ -159,6 +164,13 @@ export function analisarCatalogo(dados: unknown): ResultadoAnalise {
         erros.push(`${prefixo}: "whatsapp" fora do formato 55DDD9XXXXXXXX.`);
         itemValido = false;
       }
+      if (item.instagram != null && instagram === null) {
+        erros.push(
+          `${prefixo}: "instagram" deve ser null ou nome de usuário válido ` +
+            '(letras, números, ponto e sublinhado, até 30 caracteres, sem "@").',
+        );
+        itemValido = false;
+      }
       if (!REGEX_DATA.test(p.atualizadoEm)) {
         erros.push(`${prefixo}: "atualizadoEm" fora do formato AAAA-MM-DD.`);
         itemValido = false;
@@ -186,6 +198,7 @@ export function analisarCatalogo(dados: unknown): ResultadoAnalise {
         profissao: p.profissao.trim(),
         descricao: p.descricao.trim(),
         municipio: p.municipio.trim(),
+        instagram,
         bairros: listaDeTextos(item.bairros, erros, prefixo, 'bairros'),
         outros_municipios: listaDeTextos(item.outros_municipios, erros, prefixo, 'outros_municipios'),
         atendimento_remoto: item.atendimento_remoto === true,
