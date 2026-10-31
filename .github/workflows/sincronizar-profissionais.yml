@@ -158,3 +158,31 @@ jobs:
           npx --yes wrangler@3 pages deploy dist \
             --project-name="${{ vars.CLOUDFLARE_PAGES_PROJECT }}" \
             --branch=main --commit-dirty=true
+
+      # LGPD: cada deployment do Pages fica acessível para sempre em
+      # <hash>.<projeto>.pages.dev — sem esta limpeza, um perfil excluído
+      # continuaria público na versão anterior do site. Mantemos apenas o
+      # deployment de produção vigente; "rollback" = reexecutar a
+      # sincronização (a planilha é a fonte da verdade).
+      - name: Remover deployments antigos (LGPD)
+        if: steps.modo.outputs.gravar == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          PROJETO="${{ vars.CLOUDFLARE_PAGES_PROJECT }}"
+          API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJETO/deployments"
+          AUT="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          ATUAL=$(curl -sf -H "$AUT" "$API?env=production" | jq -r '.result[0].id')
+          if [ -z "$ATUAL" ] || [ "$ATUAL" = "null" ]; then
+            echo "FALHA: não foi possível identificar o deployment de produção vigente." >&2
+            exit 1
+          fi
+          FALHAS=0
+          for ID in $(curl -sf -H "$AUT" "$API?per_page=100" | jq -r '.result[].id' | grep -v "^$ATUAL$"); do
+            echo "removendo deployment antigo $ID"
+            curl -sf -X DELETE -H "$AUT" "$API/$ID" > /dev/null \
+              || { echo "FALHA: não foi possível remover o deployment $ID — dado antigo pode seguir acessível." >&2; FALHAS=$((FALHAS+1)); }
+          done
+          echo "Deployments restantes: apenas o vigente ($ATUAL)."
+          [ "$FALHAS" -eq 0 ] || exit 1
