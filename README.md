@@ -33,13 +33,25 @@ Variáveis de ambiente opcionais (copie `.env.example` para `.env`):
 
 ## Publicação
 
-O build gera um site 100% estático em `dist/`, pronto para qualquer
-hospedagem de arquivos estáticos (por exemplo, Cloudflare Pages com comando
-de build `npm run build` e diretório de saída `dist`).
+O workflow `Sincronizar profissionais` gera o site no CI (a partir da
+planilha privada), roda os testes e publica por **upload direto** no
+Cloudflare Pages. O repositório guarda apenas código — nenhum dado pessoal
+entra no histórico do git.
 
-## Dados e privacidade
+## Dados e privacidade (LGPD)
 
-O catálogo público fica em `public/data/`. Cadastros válidos são publicados
-automaticamente com o consentimento explícito do profissional; a moderação
-atua por exceção (denúncias, bloqueios e registros suspeitos) — veja a
-Política de Privacidade no próprio site (`/privacidade/`).
+Dados pessoais **nunca são versionados**: `public/data/` (catálogo) e
+`dados/` (estado operacional) são ignorados pelo git e uma guarda no CI
+impede que sejam commitados. O catálogo é gerado em cada sincronização a
+partir da planilha privada do Google Sheets e existe apenas no runner e no
+site publicado; o estado de identidades/exclusões (pseudonimizado por HMAC)
+fica no Cloudflare KV. Assim, a exclusão de um profissional remove o dado do
+site de fato — sem cópias em histórico versionado. Para desenvolver
+localmente com dados fictícios:
+
+```bash
+python scripts/sync_catalogo.py --csv scripts/modelo_planilha.csv --saida public/data --dir-dados dados --id-secret teste
+```
+
+Cadastros são publicados com consentimento explícito; a moderação atua por
+exceção — veja a Política de Privacidade no próprio site (`/privacidade/`).

@@ -7,6 +7,7 @@ dist/
 .env
 .env.*
 !.env.example
+.venv-testes
 
 # Python
 __pycache__/
@@ -25,5 +26,8 @@ Thumbs.db
 # Documentação operacional interna (não publicada)
 docs/
 
-# Dados operacionais locais (o mapa de identidades E versionado; o relatório não)
-dados/relatorio-moderacao.json
+# Dados pessoais (LGPD): catálogo e estado operacional NUNCA versionados.
+# São gerados no CI a partir da planilha privada e publicados por upload
+# direto; o CI tem uma guarda que impede o commit destes caminhos.
+public/data/
+dados/

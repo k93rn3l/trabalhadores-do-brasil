@@ -43,5 +43,12 @@ jobs:
       - name: Testes do sincronizador (pytest)
         run: pytest scripts/tests -q
 
-      - name: Validar catálogo público
-        run: python scripts/validar_catalogo.py public/data/profissionais.json
+      # Guarda LGPD: dados pessoais jamais versionados — catálogo e estado
+      # operacional existem só no runner do CI e no site publicado.
+      - name: Guarda LGPD — nenhum dado pessoal versionado
+        run: |
+          if git ls-files public/data dados | grep -q .; then
+            echo "FALHA: arquivos de dados versionados (devem ficar fora do git):" >&2
+            git ls-files public/data dados >&2
+            exit 1
+          fi

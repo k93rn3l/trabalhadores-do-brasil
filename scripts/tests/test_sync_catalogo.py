@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -869,18 +870,18 @@ class TestSemRegistros:
         assert "Fulana" not in texto and "secreto" not in texto
 
 
-class TestCatalogoDoRepositorio:
-    """O catálogo commitado (com dados reais) deve ser válido, consistente e
-    sem dados privados — sem premissa de estar vazio."""
+class TestRepositorioSemDadosPessoais:
+    """LGPD: dados pessoais jamais versionados — o catálogo real é gerado no
+    CI a partir da planilha privada e publicado por upload direto; estado
+    operacional vive no Cloudflare KV. O repositório guarda apenas código."""
 
-    def test_esquema_consistencia_e_privacidade(self):
-        caminho = RAIZ / "public" / "data" / "profissionais.json"
-        dados = json.loads(caminho.read_text(encoding="utf-8"))
-        valido, erros = sync.validar_catalogo(dados)
-        assert valido, erros
-        assert dados["total"] == len(dados["profissionais"])
-        for registro in dados["profissionais"]:
-            assert set(registro.keys()) == set(sync.CAMPOS_PUBLICOS)
+    def test_nenhum_arquivo_de_dados_versionado(self):
+        resultado = subprocess.run(
+            ["git", "ls-files", "public/data", "dados"],
+            capture_output=True, text=True, cwd=RAIZ, check=True,
+        )
+        rastreados = [linha for linha in resultado.stdout.splitlines() if linha.strip()]
+        assert not rastreados, f"arquivos de dados versionados: {rastreados}"
 
     def test_modelo_de_planilha_processavel(self):
         linhas = sync.ler_csv(str(RAIZ / "scripts" / "modelo_planilha.csv"))

@@ -14,15 +14,21 @@ export interface CarregarCatalogo {
 }
 
 /**
- * Lê e valida public/data/profissionais.json. Se o arquivo estiver corrompido,
- * o build falha com mensagem clara — um catálogo inválido nunca deve ser
- * publicado (princípio fail-closed).
+ * Lê e valida public/data/profissionais.json (gerado pelo sincronizador no
+ * CI, a partir da planilha privada). Arquivo ausente é um estado válido —
+ * catálogo vazio: o repositório guarda apenas código e os dados pessoais
+ * nunca são versionados (LGPD). Arquivo corrompido falha o build com
+ * mensagem clara — um catálogo inválido nunca deve ser publicado
+ * (princípio fail-closed).
  */
 export function carregarCatalogo(): CarregarCatalogo {
   let texto: string;
   try {
     texto = readFileSync(fileURLToPath(CAMINHO_CATALOGO), 'utf-8');
   } catch (erro) {
+    if ((erro as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { catalogo: { versao: 1, geradoEm: null, total: 0, profissionais: [] } };
+    }
     throw new Error(
       `Não foi possível ler public/data/profissionais.json: ${(erro as Error).message}`,
     );
